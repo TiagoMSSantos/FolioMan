@@ -18,12 +18,20 @@ arithmetic aid for a conversation with an accountant, not advice; the repo's rul
     python3 -I tools/exit_tax.py --cost 10000 --cagr 10 --years 20 --wrapper-fee 0.5
     python3 -I tools/exit_tax.py --cost 10000 --cagr 10 --years 20 --asset crypto
     python3 -I tools/exit_tax.py --lots lots.csv [--today 2026-11-09]   # per-lot "cost of selling now" (#1424)
+    python3 -I tools/exit_tax.py --estate 100000 250000 1000000         # US estate tax on US-situated shares (#1521)
     python3 -I tools/exit_tax.py --selftest
 
 --lots reads `ticker,buy_date,cost,value[,asset]` and prints, per lot, the tax a sale TODAY pays, the next rung
 of the ladder (the day the lot turns > 2, >= 5 or >= 8 years old; 365 days for a crypto asset), the tax at that
 rung on today's value and the days to wait: the friction the behaviour-gap literature says an investor needs to
 see before selling a long-held lot in a drawdown.
+
+--estate (#1521) is the one tax here that is not Portuguese: the US federal estate tax on the US-situated property of a
+holder who is neither a US citizen nor a US resident, in dollars. Shares of a corporation organized in the United
+States are such property wherever they are listed or held (Instructions for Form 706-NA, 09/2025), a fund or company
+organized elsewhere is not, and Portugal has no estate tax treaty with the United States (irs.gov treaty list, reviewed
+2026-09-08). The tax is Table A's tentative tax on the balance less the $13,000 unified credit: no deduction, no
+treaty and no lifetime gift is modelled.
 """
 import argparse, csv, datetime, io
 
@@ -40,6 +48,13 @@ BRACKETS = {
 # art. 68.º-A solidarity surcharge: (lower limit, rate) on the slice of taxable income above it
 SOLIDARITY = [(80000, 0.025), (250000, 0.05)]
 WRAPPER = [(0, 1.0), (5, 0.8), (8, 0.4)]  # art. 5.º n.º 3: share of the wrapper's income that is taxed, by years held
+# (#1521) Table A, the unified rate schedule, as the Instructions for Form 706 (07/2026) print it, read 2026-11-14:
+# (taxable amount over, tax on that amount, rate on the excess)
+US_ESTATE_TABLE = [
+    (0, 0, 0.18), (10_000, 1_800, 0.20), (20_000, 3_800, 0.22), (40_000, 8_200, 0.24), (60_000, 13_000, 0.26), (80_000, 18_200, 0.28),
+    (100_000, 23_800, 0.30), (150_000, 38_800, 0.32), (250_000, 70_800, 0.34), (500_000, 155_800, 0.37), (750_000, 248_300, 0.39), (1_000_000, 345_800, 0.40),
+]
+US_ESTATE_CREDIT = 13_000  # Instructions for Form 706-NA (09/2025), Part II line 7: "the maximum unified credit is $13,000"
 
 
 def excluded(years, asset="securities"):
@@ -104,6 +119,23 @@ def wrapper_break_even(cost, cagr, years, fee_grid=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5
         v = cost * (1 + (cagr - fee) / 100) ** years
         rows.append((fee, v - wrapper_tax(v - cost, years)))
     return bare, rows
+
+
+def us_estate_tax(us_situs):
+    """(#1521) US estate tax on `us_situs` dollars of US-situated property left by a holder who is neither a US citizen
+    nor a US resident: Table A's tentative tax less the unified credit, never under 0."""
+    over, base, rate = [row for row in US_ESTATE_TABLE if us_situs > row[0] or row[0] == 0][-1]
+    return max(0.0, base + (us_situs - over) * rate - US_ESTATE_CREDIT)
+
+
+def estate_report(balances):
+    out = ["US estate tax on US-situated property, holder neither a US citizen nor a US resident, no treaty (Form 706-NA):",
+           "  US-situated $        tax $    share   of each further dollar"]
+    for b in balances:
+        tax = us_estate_tax(b)
+        out.append(f"  {b:13,.0f}  {tax:11,.0f}  {tax / b * 100 if b > 0 else 0.0:5.1f} %   {(us_estate_tax(b + 1.0) - tax) * 100:4.0f} %")
+    out.append("  shares of US corporations count wherever they are listed or held; a fund or company organized elsewhere does not")
+    return "\n".join(out)
 
 
 def add_years(d, years):
@@ -214,6 +246,17 @@ def selftest():
     assert "BTC       2026-06-01   0.4 y    0 %       112  2027-06-01  100 %         0      112   204 d" in rep, rep
     assert "total tax if everything sold today 560; after each lot's next rung 392" in rep, rep
     assert abs(wrapper_tax(100.0, 8.5) - 11.2) < 1e-9 and abs(wrapper_tax(100.0, 6) - 22.4) < 1e-9 and abs(wrapper_tax(100.0, 3) - 28.0) < 1e-9
+    # (#1521) Table A is continuous: each row's tax is the row before's plus that row's width at its rate
+    for (over0, base0, rate0), (over1, base1, _) in zip(US_ESTATE_TABLE, US_ESTATE_TABLE[1:]):
+        assert abs(base0 + (over1 - over0) * rate0 - base1) < 1e-6, (over1, base1)
+    assert US_ESTATE_TABLE[4][:2] == (60_000, US_ESTATE_CREDIT), "the credit is the tax on $60,000, the filing threshold"
+    assert us_estate_tax(0) == 0.0 and us_estate_tax(-5.0) == 0.0 and us_estate_tax(60_000) == 0.0 and us_estate_tax(59_999) == 0.0
+    assert abs(us_estate_tax(60_001) - 0.26) < 1e-9, "the first dollar over the threshold pays 26 %"
+    assert abs(us_estate_tax(10_000) - 0.0) < 1e-9 and abs(us_estate_tax(100_000) - 10_800) < 1e-6 and abs(us_estate_tax(250_000) - 57_800) < 1e-6
+    assert abs(us_estate_tax(500_000) - 142_800) < 1e-6 and abs(us_estate_tax(1_000_000) - 332_800) < 1e-6 and abs(us_estate_tax(2_000_000) - 732_800) < 1e-6
+    rep = estate_report([60_000, 250_000, 1_000_000])
+    assert "       60,000            0    0.0 %     26 %" in rep and "      250,000       57,800   23.1 %     34 %" in rep, rep
+    assert "    1,000,000      332,800   33.3 %     40 %" in rep, rep
     print("exit_tax selftest ok")
 
 
@@ -231,10 +274,16 @@ def main():
     ap.add_argument("--asset", choices=["securities", "crypto"], default="securities", help="crypto = a criptoativo that is not a valor mobiliário (art. 10.º n.º 22)")
     ap.add_argument("--lots", help="a CSV of held lots (ticker,buy_date,cost,value[,asset]): print the per-lot sell friction and exit")
     ap.add_argument("--today", help="the valuation date for --lots, YYYY-MM-DD (default: today)")
+    ap.add_argument("--estate", type=float, nargs="+", metavar="USD", help="(#1521) US-situated balances in dollars: print the US estate tax on each and exit")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         selftest()
+        return
+    if a.estate:
+        print(estate_report(a.estate))
+        print("\nnot advice: Table A and the $13,000 credit as irs.gov printed them on 2026-11-14; deductions, a treaty, lifetime gifts and"
+              " the Portuguese side are not modelled; an accountant or a lawyer confirms your own case.")
         return
     if a.lots:
         today = datetime.date.fromisoformat(a.today) if a.today else datetime.date.today()

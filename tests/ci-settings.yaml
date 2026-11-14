@@ -30622,6 +30622,43 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT, 2026-11-14: RECORD. W funds the page's 10 stocks and its head 5, so the parity lane is CLOSED on the
 #   live mix: no 4th switch, no owner question.
 
+# (#1521) US ESTATE TAX ON THE BOOK'S OWN SHARES, RECORD, 2026-11-14. No knob, no run; `tools/exit_tax.py --estate`.
+# WHY NOW: since 2026-10-14 the sized book holds no fund. The journal: funds held 50.7 % of gross on 2026-09-21 and
+#   14.2 % on 2026-10-13, and nothing on each of the 32 lines since; the book is 93 to 95 % single stocks and one coin.
+#   A fund on the core table is a UCITS fund, organized in the EU. A stock seat is, most days, a share of a US
+#   corporation.
+# THE LAW, read on irs.gov 2026-11-14. Not advice: an accountant or a lawyer confirms the owner's own case.
+#   1. The estate of a holder who is neither a US citizen nor a US resident owes US estate tax on US-situated property.
+#      "Stock of corporations organized in or under U.S. law" is such property "even if the nonresident held the
+#      certificates abroad or registered the certificates in the name of a nominee" ("Some nonresidents with U.S.
+#      assets must file estate tax returns", reviewed 2026-06-27); "all other corporate stock is property located
+#      outside the United States" (Instructions for Form 706-NA, 09/2025). So NVD.DE or APC.DE bought on Xetra is US
+#      property, and ASML (Netherlands), STX (an Irish plc) and every UCITS fund are not.
+#   2. The executor files Form 706-NA when the US-situated assets exceed $60,000, a threshold "not indexed for
+#      inflation". "In general, the maximum unified credit is $13,000" (the same instructions), which is Table A's
+#      tax on $60,000; the table runs from 18 % on the first $10,000 to 40 % above $1,000,000 (Instructions for Form
+#      706, 07/2026).
+#   3. The estate and gift tax treaty list (reviewed 2026-09-08) names 15 countries. Portugal is not one of them.
+#   4. A transfer certificate takes "12 to 18 months from the time the IRS receives all necessary documentation"
+#      (reviewed 2026-05-05).
+#   5. Portugal's stamp duty on an inheritance exempts the spouse or partner, descendants and ascendants (Código do
+#      Imposto do Selo, art. 6.º n.º 1 e)), so for them no home tax exists to set the US one against.
+# THE ARITHMETIC, tax on a US-situated balance with no deduction and no treaty (`--estate`; the tool's selftest pins
+#   Table A row by row): $60,000 0 | $100,000 10,800 (10.8 %) | $250,000 57,800 (23.1 %) | $500,000 142,800 (28.6 %) |
+#   $1,000,000 332,800 (33.3 %) | $2,000,000 732,800 (36.6 %). Each dollar over $60,000 pays 26 % or more.
+# THE BOOK, journal line 2026-11-14: ten stock seats, eight on US corporations (FTNT, SNDK, APC.DE, WDC, INL.DE,
+#   LAR0.DE, NVD.DE, LU2.DE: 74.7 % of the sized book), two not (ASML 16.59 %, STX 2.07 %), and BTC-EUR 6.67 %.
+#   shortcut: each place of incorporation is the company's own statement on its annual report's cover, from memory and
+#   not fetched (sec.gov is outside the session that wrote this). EDGAR's `submissions` JSON carries it as
+#   `stateOfIncorporation`; no code here reads that field.
+# WHAT IT IS NOT: a buy rule, a score term or a reason to sell. It prices the vehicle, not the name: a company held
+#   through a fund organized outside the United States is outside this tax, and held as its own share it is inside.
+# OWNER QUESTION, one: (a) record only; (b) the page states the share of BUY NOW that is US-situated. (b) needs a
+#   domicile source for stocks, which `core::EU_MARKETS` already says it lacks for Irish payers: `stateOfIncorporation`,
+#   one cached GET per filer. Built only on the owner's word.
+# OWNER, 2026-11-14: (b). The page line is (#1526): display only, by probe tag, CI and Screen A/B before Pages.
+# REVERT RULE: none.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
