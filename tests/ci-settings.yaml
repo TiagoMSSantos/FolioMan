@@ -23954,7 +23954,8 @@ buy_heuristic:
   #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
   serve_walk_5y: true            # (#1509) 5Y from the walk's view; false = the page's own leg
   #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
-  serve_walk_ma: false           # (#1509) the ~200-week average's two reads from the walk's view; false = the page's own
+  serve_walk_ma: true            # (#1509) the ~200-week average's two reads from the walk's view; false = the page's own
+  #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
@@ -30333,6 +30334,14 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   share, so it moved no name and no share. As said before, the 20Y crossings sit off the 30-row table: the leg
 #   moves on 446 rows, and with it `fund.peg_yield` on 368.
 # VERDICT, 20Y: RECORD by the rule; `serve_walk_20y` went to RETIRED in a code commit of its own, as (#1500)'s did.
+# RESULT, A/B 5 (run 43599214194 on probe-r26 (edefc2e), MA alone over the shipped 1Y and 5Y, read on (#1512)'s
+#   fix as its RULE asks; c1 = c2, so the noise is 0): LAR0.DE enters at seat 5 (16.59 %); DVA goes from seat 5
+#   to 7 (16.59 to 2.07 %); AP2.DE (seat 9, 2.07 %) leaves; NVD.DE moves from seat 7 to 9 at 2.07 %. LAR0.DE's
+#   average read is 73 % above on the walk (80 % on the page), nearer the brake's free 60, and its score rises 30.6
+#   to 35.6 (rank 12 to 5). AP2.DE's reads 57 % (63 %), under 60, and its score rises 31.5 to 32.6, but LAR0.DE's
+#   entry pushes it to rank 11. DVA reads 28 % (31 %) and keeps 33.8.
+# VERDICT, MA: SHIPPED 2026-11-14 on the owner's word ("Ship it"), `serve_walk_ma: true`: parity with the read the
+#   walk graded, not a measured gain; no golden moves.
 
 # (#1511) THE DCA RULER'S BOOKS TAKE THE COHORT RANKS, PRE-REGISTERED 2026-11-14 before any run. No knob: one code
 #   line in `backtest::walk`.
