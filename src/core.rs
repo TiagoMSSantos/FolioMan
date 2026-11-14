@@ -3869,6 +3869,30 @@ pub fn parity_merged_view(ticker: &str, dates: &[NaiveDate], closes: &[f64], div
     Some(backtest_quote(ticker, dates, closes, divs, last, 252, &BTreeMap::new()))
 }
 
+/// (#1509) The page reads the walk's view of a name in place of its own, one switch per field group, in the order
+/// [`crate::config::serve_walk`] returns them: [1Y with 6M, 5Y, 20Y, the long average's two reads]. Each leg is
+/// copied as the walk holds it, a missing one included, the way the (#1498) SPLIT copied it: into `perf`, and into
+/// `perf_nominal` when the page scores on it.
+// shortcut: the walk's legs are nominal and unconverted, so with a deflator `perf` holds them among real legs (only a
+// run with `score_on_nominal` off reads those; it ships on), and the `perf` command prints their past close in the
+// listing's currency ("123.45?"). Deflate and convert the served leg if either ever matters.
+pub fn serve_walk(q: &mut Quote, walk: &Quote, on: [bool; 4]) {
+    for (label, _) in [("6M", on[0]), ("1Y", on[0]), ("5Y", on[1]), ("20Y", on[2])].into_iter().filter(|(_, o)| *o) {
+        let i = HORIZONS.iter().position(|(l, _)| *l == label).expect("a horizon");
+        let set = |legs: &mut Vec<Option<(String, f64)>>| {
+            legs.resize(legs.len().max(HORIZONS.len()), None);
+            legs[i] = walk.perf.get(i).cloned().flatten();
+        };
+        set(&mut q.perf);
+        if !q.perf_nominal.is_empty() {
+            set(&mut q.perf_nominal);
+        }
+    }
+    if on[3] {
+        (q.below_ma_pct, q.above_ma_pct) = (walk.below_ma_pct, walk.above_ma_pct);
+    }
+}
+
 /// (#1484) The long monthly chart against the daily one: each monthly bar inside the daily window, the last (current)
 /// month excepted, against the daily close of its month's last session, the last daily bar before the next monthly
 /// bar. `off` counts gaps over 2 %; `worst` is the largest gap, monthly over daily in %, at `worst_at`. Yahoo stamps a
@@ -12672,6 +12696,47 @@ fn parity_views_read_the_last_bar() {
     let merged = parity_merged_view("W", &dd, &dcl, &[]).expect("a series with bars has a view");
     assert_eq!(merged.price_eur, Some(399.0), "the last daily close");
     assert!(parity_merged_view("W", &[], &[], &[]).is_none());
+}
+
+/// (#1509) Each switch serves only its own group from the walk's view, a missing leg included: 1Y brings 6M, the long
+/// average brings both its reads, `perf_nominal` is written only when the page scores on it, and all four off change
+/// nothing.
+#[test]
+fn serve_walk_moves_only_its_switched_group() {
+    let day = |k: i64| NaiveDate::from_ymd_opt(2025, 1, 1).unwrap() + Duration::days(k);
+    let (dd, dcl): (Vec<NaiveDate>, Vec<f64>) = (0..300).map(|k| (day(k), 100.0 + k as f64)).unzip();
+    let mut page = parity_merged_view("P", &dd, &dcl, &[]).expect("a series with bars has a view");
+    let at = |l: &str| HORIZONS.iter().position(|(h, _)| *h == l).unwrap();
+    page.perf = (0..HORIZONS.len()).map(|i| Some((format!("p{i}"), i as f64))).collect();
+    (page.below_ma_pct, page.above_ma_pct) = (1.0, 2.0);
+    let mut walk = page.clone();
+    walk.perf = (0..HORIZONS.len()).map(|i| Some((format!("w{i}"), 1000.0 + i as f64))).collect();
+    walk.perf[at("20Y")] = None; // a leg the walk's chart is too short for
+    (walk.below_ma_pct, walk.above_ma_pct) = (7.0, 9.0);
+    let served = |on: [bool; 4], nominal: bool| {
+        let mut q = page.clone();
+        if nominal {
+            q.perf_nominal = q.perf.clone();
+        }
+        serve_walk(&mut q, &walk, on);
+        q
+    };
+    let moved = |legs: &[Option<(String, f64)>]| -> Vec<&'static str> { HORIZONS.iter().enumerate().filter(|(i, _)| legs[*i] != page.perf[*i]).map(|(_, (l, _))| *l).collect() };
+    let ma = |q: &Quote| (q.below_ma_pct, q.above_ma_pct);
+    let off = served([false; 4], false);
+    assert!(moved(&off.perf).is_empty() && off.perf_nominal.is_empty() && ma(&off) == (1.0, 2.0), "all off is the page's own");
+    let y1 = served([true, false, false, false], false);
+    assert_eq!(moved(&y1.perf), ["6M", "1Y"]);
+    assert_eq!(y1.perf[at("1Y")], walk.perf[at("1Y")]);
+    assert!(y1.perf_nominal.is_empty() && ma(&y1) == (1.0, 2.0), "no nominal legs made up, the average stays");
+    assert_eq!(moved(&served([false, true, false, false], false).perf), ["5Y"]);
+    let y20 = served([false, false, true, false], false);
+    assert_eq!((moved(&y20.perf), &y20.perf[at("20Y")]), (vec!["20Y"], &None), "a leg the walk lacks is served missing");
+    let avg = served([false, false, false, true], false);
+    assert!(moved(&avg.perf).is_empty() && ma(&avg) == (7.0, 9.0), "both reads of the average, no leg");
+    let nom = served([true, false, false, false], true);
+    assert_eq!((moved(&nom.perf), moved(&nom.perf_nominal)), (vec!["6M", "1Y"], vec!["6M", "1Y"]), "the scored legs move too");
+    assert_eq!(moved(&served([true; 4], false).perf), ["6M", "1Y", "5Y", "20Y"]);
 }
 
 /// (#1484) Monthly bars against daily ones: a month whose bar closes on its last session reads 0; a bar 5 % off reads

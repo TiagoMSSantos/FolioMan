@@ -645,6 +645,14 @@ pub struct BuyHeuristic {
     pub use_adjusted_close: bool,    // (Item 21) PROBE switch: when true, parse_chart prefers Yahoo's adjclose (split+DIVIDEND adjusted) over raw close, so the long CAGR / range_pct near-high gate / drawdown / overext brake measure TOTAL return instead of price-only — fixes dividend-compounders that are mis-ranked (CAGR understates total return) or mis-EXCLUDED (nominal price below old high fails growth_min_range_pct). Flows to BOTH live + backtest (one parse site) so no train-serve skew. DEFAULT false = raw close, unchanged. Crypto/FX have no adjclose -> falls back to close (no effect). Adjusted close re-calibrates EVERY price threshold (range floor, overext, min_cagr, vol/SMA), so flip ONLY for a full `backtest universe` re-validation + gate re-sweep, then keep it only if both OOS halves still hold. Golden-rule-gated.
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1484) still matches
     pub print_parity: bool, // (#1484) print, after the page's tables, the PARITY CENSUS: for every scored name the walk's own view (`core::backtest_quote` on the long monthly chart the walk reads, the walk's anchor map) and the merged one (the page's bars on that map), set beside the page's fields (n, median and p90 of each gap), the monthly bars checked against the daily chart (`core::bar_check`), and the stock top 10 by score and by momentum key read on each view. Display only, read through `print_parity()` by `fetch::quote_one`, which has no `tuning` handle. Ships OFF in config.rs
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1509) still matches
+    pub serve_walk_1y: bool, // (#1509) the page reads its 1Y AND 6M legs from the walk's view of the name (`core::parity_walk_view`, the census's W: the long monthly chart the walk reads) in place of its own daily ones, so the page scores the numbers the walk graded. `core::serve_walk` writes them; read through `serve_walk()` by `fetch::quote_one`, which has no `tuning` handle. Ships OFF until a Screen A/B and the owner's yes
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1509) still matches
+    pub serve_walk_5y: bool, // (#1509) the same for the 5Y leg
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1509) still matches
+    pub serve_walk_20y: bool, // (#1509) the same for the 20Y leg
+    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1509) still matches
+    pub serve_walk_ma: bool, // (#1509) the same for the long average's two reads, `below_ma_pct` and `above_ma_pct` (the walk's average spans ~48 monthly bars, the page's ~1000 daily sessions)
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1488) still matches
     pub anchor_cadence_aware: bool, // (#1488) (#188)'s named fix, the anchor that respects bar cadence: `core::horizon_changes` anchors each leg on bars before the last one only, and a leg whose window holds none falls back to the bar on or before its target only within max(half, 5) days, else reads None. Monthly history then reads 1D and 1W as None (today: a month's move and 0 %) and 1M off the bar before the endpoint; daily history reads as before but for a 1D leg across a closure over five days. One accessor (`anchor_cadence_aware()`) for the page and the walk. false = every leg as before, byte-identical, and the DEFAULT
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1477) still matches
@@ -883,6 +891,10 @@ impl Default for BuyHeuristic {
             backtest_anchor_windows: false, // (#88) OFF = the backtest keeps the empty map it always hardcoded, so every golden stays byte-identical. Turning it on re-measures every perf-fed gate at once — see the field comment and the ci-settings receipt
             use_adjusted_close: false,     // (Item 21) raw price-only close by default (= current behavior, validated edge intact). Flip to true ONLY for a full backtest re-validation + gate re-sweep — adjusted close shifts every price-calibrated threshold
             print_parity: false,           // (#1484) off, no census and no extra view built
+            serve_walk_1y: false,          // (#1509) OFF = the page's own legs and average, every golden byte-identical
+            serve_walk_5y: false,          // (#1509) as above
+            serve_walk_20y: false,         // (#1509) as above
+            serve_walk_ma: false,          // (#1509) as above
             anchor_cadence_aware: false,   // (#1488) OFF = every leg's anchor as before, every golden byte-identical
             payout_guard: false,           // (#1477) OFF = every payout as Yahoo serves it, every golden byte-identical
             backtest_tr_ruler: false,      // (#804) OFF = the price-only ruler, every golden byte-identical
@@ -2516,6 +2528,25 @@ pub fn print_parity() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| ambient().map(|s| s.buy_heuristic.print_parity).unwrap_or(false))
+}
+
+/// (#1509) free accessor read by `fetch::quote_one`: which of the walk's field groups the page reads in place of
+/// its own, in `core::serve_walk`'s order [1Y with 6M, 5Y, 20Y, the long average].
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+pub fn serve_walk() -> [bool; 4] {
+    use std::sync::OnceLock;
+    static FLAGS: OnceLock<[bool; 4]> = OnceLock::new();
+    *FLAGS.get_or_init(|| {
+        let b = ambient().map(|s| &s.buy_heuristic);
+        b.map(|b| [b.serve_walk_1y, b.serve_walk_5y, b.serve_walk_20y, b.serve_walk_ma]).unwrap_or_default()
+    })
+}
+
+/// (#1509) free accessor read by `fetch::quote_one`: it builds the walk's view of a name when the census prints it or
+/// the page serves a group from it. Here, not there, so `quote_one` keeps no operator the --lib suite cannot reach.
+#[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
+pub fn walk_view_wanted() -> bool {
+    print_parity() || serve_walk().contains(&true)
 }
 
 /// (#1488) free accessor read by `core::horizon_changes`, which every page and walk leg goes through and which has

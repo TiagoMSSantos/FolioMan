@@ -23950,6 +23950,10 @@ buy_heuristic:
   anchor_cadence_aware: true     # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure;
   #  arm 1 SHIPPED 2026-11-13 on the owner's word. REVERT: false.
   print_parity: false            # (#1484) the PARITY CENSUS after the page's tables: the walk's view, display only
+  serve_walk_1y: false           # (#1509) 1Y AND 6M from the walk's view (`core::serve_walk`); false = the page's own legs
+  serve_walk_5y: false           # (#1509) 5Y from the walk's view; false = the page's own leg
+  serve_walk_20y: false          # (#1509) 20Y from the walk's view; false = the page's own leg
+  serve_walk_ma: false           # (#1509) the ~200-week average's two reads from the walk's view; false = the page's own
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
   growth_momentum_vol_cut: 0.0   # (#1244) share of the jumpiest momentum names that lose their key; 0.0 = off, the shipped
@@ -30263,6 +30267,41 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT, 2026-11-14: L2 is the PICK, and its A/B moves no BUY NOW name, so under SHIP it closes as RECORD, as round
 #   22's row 4 did; L3 passes but loses the ladder (+0.040 against +0.043): RECORD. L1, D1, D2 and D3 FAIL: RECORD.
 #   Nothing ships.
+
+# (#1509) FOUR FIELD GROUPS SERVED FROM THE WALK'S VIEW, PRE-REGISTERED 2026-11-14 before any run. Knobs:
+#   `serve_walk_1y`, `serve_walk_5y`, `serve_walk_20y` and `serve_walk_ma` (false ships, each). Row: (#1510).
+# WHY: (#1498)'s VERDICT left four owner questions, one per group whose ALONE line moved a census seat, 1Y first. The
+#   owner's words, 2026-11-14: 1Y "Build + A/B first"; 5Y, 20Y and MA "All three, own switch". 6M rides on 1Y's
+#   switch: it moved no seat alone, only together with 1Y.
+# CHANGE: `core::serve_walk`. With a switch on, `fetch::quote_one` copies that group from the walk's view of the name
+#   (`core::parity_walk_view`, the census's W: the long monthly chart at cadence 12) over the page's own: 1Y and 6M;
+#   5Y; 20Y; the ~200-week average's two reads, `below_ma_pct` and `above_ma_pct`. A leg the walk lacks is served as
+#   missing, as the census's SPLIT copied it. The legs land in `perf` and, when it is filled (`score_on_nominal` with
+#   an inflation series, as ci-settings ships), in `perf_nominal`, which the scores read. A name with no long chart
+#   has no walk view and keeps its own fields. Off, the walk view is built only under `print_parity`, as before, and
+#   every golden is byte-identical; `serve_walk_moves_only_its_switched_group` pins each switch to its own group.
+#   shortcut: the served legs are nominal and in the listing's currency, so the `perf` command prints their past
+#   close as "123.45?", and a run with `score_on_nominal` off reads a nominal leg among real ones.
+# WHAT READS THEM, on the stock table: 1Y the score's `accel` (growth_accel_weight 0.50), the value-trap dock and,
+#   with 6M, the momentum half's key; 5Y the 5Y floor (growth_min_5y_pct 75), the dock, and the long-leg rung where a
+#   name has no 20Y or 8Y; 20Y its floor (growth_min_20y_pct 141.18) and the rung's first choice; the average the
+#   stretch gate (growth_max_above_ma 150) and the brake (growth_overext_free 60). The census's books are ungated
+#   top-10 SETS, so a gate or a seat order they cannot see may move a seat here and not there.
+# RUN: two Screen A/Bs on the probe tag (origin main lacks the knobs), each against its two plain controls. A/B 1:
+#   knobs="serve_walk_1y=true". A/B 2: knobs="serve_walk_1y=true serve_walk_5y=true serve_walk_20y=true
+#   serve_walk_ma=true".
+# READ: the BUY NOW names that enter or leave and every share that moves, beside the c1-c2 noise; then rank moves on
+#   the stock table.
+# SAID BEFORE THE RUN: 1. A/B 1 moves no BUY NOW name: the census's 1Y movers sit outside today's ten (FIX rank 13,
+#   EME 17, M4I.DE 18, FLEX 21; KEYS and TER are on no table). Seats may change order, so shares may move between the
+#   16.59 % and 2.07 % bands. 2. A/B 2 may drop DVA (seat 9; the census's 5Y alone line is -DVA). 3. ROST and KLA.DE
+#   (ranks 14 and 15) may swap, outside BUY NOW.
+# RULE, fixed now: a switch whose A/B moves no BUY NOW name and no share beyond the noise closes as RECORD. If A/B 2
+#   moves no BUY NOW seat beyond A/B 1, the 5Y, 20Y and MA switches close as RECORD together. Else ONE owner question
+#   with the card, 1Y first. Nothing ships without the owner's yes; a ship takes its own tag, CI and a rebless when
+#   the goldens move.
+# REVERT RULE: a switch set back to false. A RECORD switch goes to RETIRED in a code commit of its own, as (#1500)'s
+#   did.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

@@ -969,7 +969,8 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
     // (#1484) under `print_parity` only: the walk's own view of this name (its long monthly chart, the walk's anchor
     // map) and that chart's bars against this daily one, both taken before a proxy splice can glue donor bars under it
     // (#1502) built by `core::parity_walk_view`, which the suite reaches; this switch is the only line here it cannot
-    let parity_walk = if crate::config::print_parity() {
+    // (#1509) also built when the page serves any of the walk's field groups (`core::serve_walk`, below)
+    let parity_walk = if crate::config::walk_view_wanted() {
         lc.as_ref().and_then(|m| core::parity_walk_view(ticker, &m.dates, &m.closes, &m.divs, &chart.dates, &chart.closes))
     } else {
         None
@@ -1178,7 +1179,7 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         _ => None,
     };
 
-    Quote {
+    let mut q = Quote {
         growth_sector_floor: None, // (#328) stamped per run by the caller, never fetched
         name_class: None,
         ticker: ticker.to_string(),
@@ -1350,11 +1351,16 @@ pub async fn quote_one(client: &Client, urls: &Urls, fx_cache: &FxCache, ticker:
         bench_range_pct: None,
         // (#1393) the smoothed/raw endpoint ratio of this daily chart, for the momentum keys' one-endpoint knob
         endpoint_ratio: core::endpoint_ratio(&chart.closes),
-        // (#1484) the merged view: the page's own series on the walk's anchor map, beside the walk's
-        parity: parity_walk.and_then(|(walk, bars)| {
-            core::parity_merged_view(ticker, &long_dates, &long_closes, &long_divs).map(|merged| Box::new(core::Parity { walk, merged, bars }))
-        }),
+        parity: None,
+    };
+    if let Some((walk, _)) = &parity_walk {
+        core::serve_walk(&mut q, walk, crate::config::serve_walk());
     }
+    // (#1484) the merged view: the page's own series on the walk's anchor map, beside the walk's
+    q.parity = parity_walk.filter(|_| crate::config::print_parity()).and_then(|(walk, bars)| {
+        core::parity_merged_view(ticker, &long_dates, &long_closes, &long_divs).map(|merged| Box::new(core::Parity { walk, merged, bars }))
+    });
+    q
 }
 
 // LIVE fundamentals (P/E, ROE, expense ratio) are quarterly-ish, so a 1-week cache is plenty fresh and
