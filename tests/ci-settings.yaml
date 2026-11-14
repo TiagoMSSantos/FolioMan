@@ -30179,6 +30179,30 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VOLATILITY: a monthly-bar stdev is not the daily one times sqrt(21) (Burns' "volatility mystery" posts; GARCH on daily
 #   against monthly data), so (#1498)'s vol group may move a seat on its own, through the sharpe term (#97), (#100).
 
+# (#1504) SIX DIALS OF THE STOCK BUY SCORE, EACH ON ITS OWN, PRE-REGISTERED 2026-11-14 before any run. Row: (#1505).
+#   The owner's words, 2026-11-14: row 14 ((#1459)'s look-3 winner, (#1496)) does not ship as one block ("Test that
+#   dial alone"); the 1/PEG weight gets a ladder ("Ladder 0.03 / 0.0056 / 0"); three more of row 14's dials join
+#   ("Add three dials"); the trend row stays in although its two neighbours failed in round 22 ("Keep it"); passers
+#   ship one at a time ("Each one in turn"). growth_max_peg stays 2.0: (#552)'s lane is closed. Each row moves one
+#   knob from today's main; the control row is {}.
+# ROWS, today's value -> the row's: L1 growth_fund_weight 0.07 -> 0.03; L2 0.07 -> 0.0056 (row 14's); L3 0.07 -> 0
+#   (the 1/PEG term off); D1 long_trend_cap 30 -> 53.8; D2 growth_trend_weight 0.15 -> 0.302; D3
+#   growth_proximity_weight 1.0 -> 0.469. D1-D3 are row 14's own values.
+# TEST: round 22's fresh test ((#1496)), the 7-row grid on one tag with rescore="guard", three probes: F1 years="15
+#   10 6" args="universe fund pit"; F2 years="15 10 6" args="universe fund pit dead"; F3 years="20 15 12 10 8 6"
+#   args="universe fund stress". A row PASSES when none of its 12 run x horizon GUARD lines reads FAIL AND the mean
+#   of its 24 NULL BAND gains (each test's mean and median) is above 0: round 22's mark.
+# PICK: on the 1/PEG ladder the passing rung with the best mean wins, a tie going to the value nearest 0.07. When two
+#   or more rows pass, the best mean goes first and the next waits for it.
+# SHIP, per passer: its own probe tag and CI, a rebless when the goldens move, then a Screen A/B that lists the BUY
+#   NOW names in, out and whose share moves, against its two controls. It ships only on the owner's yes. A passer
+#   whose A/B moves no BUY NOW name closes as RECORD, as round 22's row 4 did.
+# SAID BEFORE THE RUN: low odds. Round 22 failed the four dials together (row 13, a GUARD FAIL) and trend 0.2 and 0.4
+#   (rows 8 and 10); the 1/PEG weight at 0.05 passed (row 4, +0.06 on the 24 gains, 4 tests INERT). Cap 60 lost 115.5
+#   of 20y stress edge ((#47)); every proximity rung sat inside the noise ((#48)); 1/PEG off won at 8y and lost at
+#   12y ((#424), (#425)). The ruler is blind under about 4 %/yr ((#1333)) and these folds were read in round 22, so
+#   a pass here is weak evidence: the A/B and the owner decide.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
