@@ -269,6 +269,14 @@ jobs:
           hits=$(loose "${files[@]}")
           [ -z "$hits" ] || { echo "open( outside a with statement:"; echo "$hits"; exit 1; }
           echo "python opens: ${#files[@]} files, every open( sits on a with line"
+      # (#1527) Before (#1470) a run at night read each market one session late, and for seven weeks nothing
+      # said so: the record's Frankfurt rows repeated on every Monday and Tuesday line and moved on every
+      # Sunday line. A market read on time closes its week on Saturday's line, so Sunday's line repeats it
+      # whether or not Friday traded, which makes the Sunday line a test no holiday can fake. This step reads
+      # the record's Sunday lines from 2026-11-15 on and prints a warning for each market whose rows moved on
+      # one. A warning does not red the push: the cause would be the price feed, and a red push repairs no line.
+      - name: Record lines are read on time
+        run: python3 -I tools/book_churn.py .screen_snapshots.jsonl --late
 
   build:
     runs-on: ubuntu-24.04

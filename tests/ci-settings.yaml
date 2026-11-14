@@ -30767,6 +30767,29 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   scored stock against the run's cap of 600 (fetch.rs SEC_FETCH_BUDGET), for at most 0.12 points.
 # REVERT RULE: none; comments only.
 
+# (#1527) THE LATE READ TRIPWIRE, PRE-REGISTERED 2026-11-14 before the line it first reads. Row: (#1528). No knob
+#   and no code in src: `tools/book_churn.py --late`, run by a step of ci.yml's actionlint job.
+# WHY: (#1522)'s READ found the record's night lines one session late on Frankfurt for seven weeks, 38 lines, and
+#   nothing said so until (#1470) measured one night. A feed that moves its hours again would be as silent.
+# THE TEST: a market read on time closes its week on Saturday's line, so Sunday's line repeats it whether or not
+#   Friday traded. Read a session late, Saturday's line holds Thursday's close and Sunday's is the first to show
+#   Friday's. So a Sunday line on which a market's rows moved names a late read, and no holiday can fake one. A
+#   market is the ticker's suffix with five or more priced Stocks rows; its rows repeat when four in five of their
+#   moves sit within 0.05 points of the market's median move.
+# ITS EYESIGHT, on the lines written before the fix (`--late 2026-09-01`): 7 Sunday lines, each a day after its
+#   Saturday line, and a market's rows moved on all 7 (Frankfurt on 7 of 7, the US on 4 of 4, London on 2 of 2).
+#   It would have named the late read on 2026-09-27, the record's first Sunday.
+# WHAT IS ADDED: the mode, and one ci.yml step that prints a GitHub warning for each market that moved on a
+#   Sunday line dated 2026-11-15 or later. A warning does not fail the step: the cause would be the feed, and a
+#   red push repairs no line.
+# SAID BEFORE the line of 2026-11-15: 1. on it both markets' rows repeat Saturday's (the first line that can show
+#   (#1470) holding on a weekend night). 2. No warning on the four Sunday lines to 2026-12-06.
+# RULE, fixed now: a warning -> ONE owner question with the line and the market: the night run read late again,
+#   look at the fetch path, or keep. No warning -> nothing moves and nothing is asked.
+# shortcut: a market that trades on a Saturday would trip it (none holds five Stocks rows); a week with no
+#   Saturday line or no Sunday line is not read; the journal's own prices, not checked against a close by day.
+# REVERT RULE: delete the ci.yml step; the mode stays a reader.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

@@ -15,6 +15,7 @@ line; the whole table's do not ((#1470): before 2026-11-14 a night line could ho
 
     python3 -I tools/book_churn.py .screen_snapshots.jsonl [--since 2026-11-15] [--skip 2026-11-08 ...]
     python3 -I tools/book_churn.py .screen_snapshots.jsonl --sessions   # the lines on which a market's rows repeat
+    python3 -I tools/book_churn.py .screen_snapshots.jsonl --late       # (#1527) the Sunday lines a market moved on
     python3 -I tools/book_churn.py .screen_snapshots.jsonl --eyesight [--since ...]   # what the read can tell apart
     python3 -I tools/book_churn.py .screen_snapshots.jsonl --mean 21   # each name's mean share over the last 21 lines
     python3 -I tools/book_churn.py --brake                             # the brake's factor and slope by stretch
@@ -35,6 +36,12 @@ such a Tuesday and such a Sunday, every line of that week from Tuesday to Saturd
 repeat in mid-week is a line that fell back a session after one read on time. shortcut: a market quoted in more
 than one currency never repeats by this rule, and a market holiday repeats like a late line; the journal's own
 prices, not checked against a close by day.
+--late is (#1527)'s tripwire, the one --sessions reading no holiday can fake. A market read on time closes its week
+on Saturday's line, so Sunday's line repeats it whether or not Friday traded; read a session late, Saturday's line
+holds Thursday's close and Sunday's is the first to show Friday's. It reads every Sunday line from the date given
+(2026-11-15 when none is: the first Sunday line written after (#1470)) that follows a Saturday line, and prints a
+GitHub `::warning` for each market whose rows moved on one. A warning exits 0: the cause is the price feed.
+shortcut: a market that trades on a Saturday would trip it; none holds five rows of the Stocks table.
 --eyesight draws the names that enter and leave at random from their own market's rows on the same steps (the steps
 before --since when it is given) and counts how often (#1522)'s things said before 2 and 3 hold together: with no
 effect, with half the window's own shift and with all of it. A fixed seed, so the print repeats.
@@ -53,6 +60,7 @@ MIN_MARKET_ROWS = 5  # under this many priced rows a market has no median of its
 REPEAT_WITHIN, REPEAT_SHARE = 0.0005, 0.8  # --sessions: 0.05 points around the market's median move, four rows in five
 SAID_CHANGED, SAID_SHARE, SAID_GAP, SAID_ENTRANTS = 8, 2.0 / 3.0, 0.02, 8  # (#1522) SAID BEFORE 1 to 3 and the read's floor
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+LATE_SINCE = "2026-11-15"  # (#1527) the first Sunday line written after (#1470) (a4d6a42, on main 2026-11-13)
 
 
 def is_coin(ticker):
@@ -262,6 +270,31 @@ def sessions_report(lines):
     return "\n".join(out)
 
 
+def late_sundays(lines, since=LATE_SINCE):
+    """(#1527) (the Sunday lines read, [(date, market)] for each market whose rows moved on one). A Sunday line is
+    read when it is dated `since` or later, the line before it is the Saturday's, and a market holds
+    MIN_MARKET_ROWS priced stock rows on it."""
+    read, moved = 0, []
+    for before, (date, flags) in zip(lines, sessions(lines)):
+        day = datetime.date.fromisoformat(date)
+        if date < since or day.weekday() != 6 or not flags or (day - datetime.date.fromisoformat(before["date"])).days != 1:
+            continue
+        read += 1
+        moved += [(date, k) for k in sorted(flags) if not flags[k]]
+    return read, moved
+
+
+def late_report(lines, since=LATE_SINCE):
+    read, moved = late_sundays(lines, since)
+    if read == 0:
+        return f"late read check: no Sunday line from {since} yet"
+    out = [f"::warning title=(#1527) a record line was read late::{date}: the {k} rows moved on a Sunday line, so Saturday's line held the session before"
+           for date, k in moved]
+    dates = sorted({date for date, _ in moved})
+    tail = "every market's rows repeat Saturday's" if not moved else f"a market moved on {len(dates)}: " + " ".join(f"{date} {k}" for date, k in moved)
+    return "\n".join(out + [f"late read check, Sunday lines from {since}: {read} read, {tail}"])
+
+
 def eyesight(window, draws=20000, seed=1521):
     """[(label, share of draws on which things said before 2 and 3 both hold)] for three worlds: the names that enter
     and leave are random rows of their own market on the same steps, moved by nothing, by half the window's own
@@ -441,6 +474,27 @@ def selftest():
     assert "one market repeats and another does not: none" in sessions_report(lines), "one market on every line"
     weekend = sessions_report([wide(date, ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], flat) for date in ("2026-02-07", "2026-02-08", "2026-02-09", "2026-02-10")])
     assert "  DE  Mon 1 of 1  Tue 1 of 1  Sun 1 of 1" in weekend and weekend.count("neither Sunday's nor Monday's: 2026-02-10") == 2, weekend
+    # (#1527) the Sunday line repeats Saturday's when the week was read on time; the 7th, 8th and 9th of February
+    # 2026 are a Saturday, a Sunday and a Monday
+    sat = wide("2026-02-07", ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], flat)
+    on_time = [sat, wide("2026-02-08", ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], flat)]
+    assert late_sundays(on_time, "2026-02-01") == (1, []) and late_sundays(on_time, "2026-02-09") == (0, []), "nothing moved; a later start reads no line"
+    assert late_report(on_time, "2026-02-01") == "late read check, Sunday lines from 2026-02-01: 1 read, every market's rows repeat Saturday's"
+    assert late_report(on_time, "2026-02-09") == "late read check: no Sunday line from 2026-02-09 yet" and late_sundays([], "2026-02-01") == (0, [])
+    us_late = [sat, wide("2026-02-08", ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], tue)]  # the US rows show a new close on Sunday
+    assert late_sundays(us_late, "2026-02-01") == (1, [("2026-02-08", "US")]), "Frankfurt repeats, the US does not"
+    both = [sat, wide("2026-02-08", ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], wed)]
+    assert late_sundays(both, "2026-02-01") == (1, [("2026-02-08", "DE"), ("2026-02-08", "US")])
+    late = late_report(both, "2026-02-01")
+    assert late.count("::warning title=(#1527) a record line was read late::2026-02-08: the ") == 2 and "the DE rows moved on a Sunday line" in late, late
+    assert late.endswith("late read check, Sunday lines from 2026-02-01: 1 read, a market moved on 1: 2026-02-08 DE 2026-02-08 US"), late
+    assert late_sundays([wide("2026-02-06", ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], flat), us_late[1]], "2026-02-01") == (0, []), "no Saturday line before it: not read"
+    assert late_sundays([sat, wide("2026-02-09", ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], tue)], "2026-02-01") == (0, []), "a Monday line is not read"
+    assert late_sundays([wide("2026-02-06", ["U1", "U2", "U3", "D1.DE", "D2.DE"], ["U1"], flat), dict(sat, rows=us_late[1]["rows"])], "2026-02-01") == (0, []), "nor a Saturday line a day after Friday's"
+    assert late_sundays(us_late, "2026-02-08") == (1, [("2026-02-08", "US")]), "the start date's own line is read"
+    thin = lambda date, px: {"date": date, "sized": [], "shipped": [], "rows": [[t, px[t]] for t in us[:4]]}
+    assert late_sundays([thin("2026-02-07", flat), thin("2026-02-08", tue)], "2026-02-01") == (0, []), "four rows are no market: the line is not read"
+    assert LATE_SINCE == "2026-11-15" and datetime.date.fromisoformat(LATE_SINCE).weekday() == 6, "the default start is a Sunday"
     # eyesight: the entrants are U6 or a US row, and Paris' one row; the leavers a US row and a Frankfurt row
     eye = eyesight(ms, draws=6000)
     assert [label for label, _ in eye] == ["no effect", "half this window's shift", "this window's shift"] and eye == eyesight(ms, draws=6000), "a fixed seed"
@@ -489,6 +543,7 @@ def main():
     ap.add_argument("--mean", type=int, help="print each name's mean share over the last N lines instead")
     ap.add_argument("--sessions", action="store_true", help="print the lines on which a market's rows repeat the line before instead")
     ap.add_argument("--eyesight", action="store_true", help="print how often things said before 2 and 3 hold on random names instead")
+    ap.add_argument("--late", nargs="?", const=LATE_SINCE, metavar="SINCE", help="(#1527) warn for each Sunday line from SINCE on which a market's rows moved, instead")
     ap.add_argument("--brake", action="store_true", help="print the stretch brake's factor and slope by stretch")
     ap.add_argument("--page", help="a page payload (data.json): the Stocks rows inside the brake's band")
     ap.add_argument("--cap", type=float, default=CAP)
@@ -509,7 +564,9 @@ def main():
     if a.journal:
         with open(a.journal, encoding="utf-8") as fh:
             lines = load(fh.read())
-        if a.sessions:
+        if a.late:
+            print(late_report(lines, a.late))
+        elif a.sessions:
             print(sessions_report(lines))
         elif a.eyesight:
             print(eyesight_report(lines, a.since, tuple(a.skip)))
