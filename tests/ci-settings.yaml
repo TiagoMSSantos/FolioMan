@@ -30460,6 +30460,24 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Nothing ships from this block.
 # REVERT RULE: none; display only, under `print_parity`.
 
+# (#1516) THE EU SPLIT GAP TRIPWIRE, 2026-11-14, on the owner's pick ("Measure first"). Display only, no knob.
+# THE GAP: the page restates a European line's 10-K EPS and shares by that line's own split list ((#424),
+#   `restate_for_splits` in `enrich_fund_factor`); `adopt_us_series` keeps the own list because `track` restates
+#   journal prices with it. The walk restates by the US line's list. When the line's chart misses a split the US
+#   line books, the page reads the EPS k times rich, and `peg_yield`, `earnings_yield` and `fcf_yield` with it,
+#   until the first 10-K on the new basis, 7 to 9 months later. The fund term can gain up to 21 points, and a name
+#   can clear the PEG bar on it.
+# SEEN: CMG on C9F.DE (50:1, 2024-06-26), then APH on XPH.DE and FAST on FAS.DE: one line was exposed on about a
+#   third of the days since 2023. On 2026-11-14 the Screen artifact's 55 twin quotes show none exposed; 5 US
+#   events are missing on their line at any age, CMG's the newest. The (#608) swap covers 172 lines; the line
+#   below reads all of them.
+# WHAT IS ADDED: every screen prints, after the swap's fund pass, the swapped lines whose US line booked a split in
+#   the last 400 days that the line's own chart lacks within 5 days, each with the US line, the date, the ratio and
+#   the line's fund factor, or "none" (`split_gaps`, unit-tested).
+# RULE, standing: a named line -> ONE owner question with its numbers: restate the page's EPS by the US line's
+#   list, as the walk does, or keep. Nothing ships from this block.
+# REVERT RULE: none; display only.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

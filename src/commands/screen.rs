@@ -1861,6 +1861,19 @@ async fn trading_table(
     (rows, best, hourly.len())
 }
 
+/// (#1516) The US line's splits of the last 400 days that the European line's own chart does not book within 5 days.
+/// The page restates a European line's 10-K EPS and shares by that line's own split list ((#424), `adopt_us_series`
+/// keeps it for `track`), and the walk by the US line's, so a split missing here reads the EPS k times rich, and the
+/// fund factor with it, until the first 10-K on the new basis.
+/// shortcut: 400 days stands in for that 10-K's filing date, so a name whose newest 10-K already states the new
+/// basis is named too; read its filing date before acting on a name.
+fn split_gaps(own: &[(chrono::NaiveDate, f64)], us: &[(chrono::NaiveDate, f64)], today: chrono::NaiveDate) -> Vec<(chrono::NaiveDate, f64)> {
+    us.iter()
+        .filter(|(d, _)| (today - *d).num_days() <= 400 && !own.iter().any(|(o, _)| (*o - *d).num_days().abs() <= 5))
+        .copied()
+        .collect()
+}
+
 /// (#68) UNGRADEABLE BY THE MUTATION GATE, and skipped so that stays a stated fact rather than a
 /// trap. `run` is reachable from `main.rs` and nowhere else, so the only test that exercises it is
 /// `screen_ranks_and_journals_offline` in the cli suite — which `ci.yml`'s mutants job deliberately
@@ -2047,6 +2060,7 @@ pub async fn run(args: Vec<String>) {
     }
     // (#608) score each European line the swap put in on its US series, the one the backtest graded
     // (`eu_listing_us_series`'s doc). After the pond cut, so the pond still judges each name's own line.
+    let mut split_gap: Vec<(String, String, chrono::NaiveDate, f64)> = Vec::new(); // (#1516)
     if settings.eu_listing_us_series {
         let swapped: Vec<(String, String)> = quotes
             .iter()
@@ -2066,6 +2080,12 @@ pub async fn run(args: Vec<String>) {
             .filter(|(_, q)| !q.is_failed())
             .collect();
         eprintln!("screen: (#608) {} of {} European lines scored on their US series, the rest on their own; {} SEC GETs", us_of.len(), us_lines.len(), fetch::sec_stats().0 - sec0);
+        let today = chrono::Local::now().date_naive();
+        split_gap = quotes
+            .iter()
+            .filter_map(|q| us_of.get(&q.ticker).map(|us| (q, us)))
+            .flat_map(|(q, us)| split_gaps(&q.splits, &us.splits, today).into_iter().map(move |(d, r)| (q.ticker.clone(), us.ticker.clone(), d, r)))
+            .collect();
         quotes = quotes.into_iter().map(|q| match us_of.get(&q.ticker) { Some(us) => fetch::adopt_us_series(q, us.clone()), None => q }).collect();
     }
     // (#45) why the USE/REPL columns read n/a, bucketed by cause. Runs here because bf_meta is consulted
@@ -2082,6 +2102,18 @@ pub async fn run(args: Vec<String>) {
     // budget caps cold fetches; the rest serve from the disk cache, warming over runs.
     let sec0 = fetch::sec_stats().0; // (#699)
     fetch::enrich_fund_factor(&client, &settings.urls, &mut quotes, &settings.buy_heuristic).await;
+    // (#1516) display only: the European lines `split_gaps` names, each with the fund factor the gap inflates
+    let gaps: Vec<String> = split_gap
+        .iter()
+        .map(|(eu, us, d, r)| {
+            let f = quotes.iter().find(|q| &q.ticker == eu).and_then(|q| q.fund_factor).map_or("n/a".to_string(), |v| format!("{v:.2}"));
+            format!("{eu} ({us} {d} {r}:1, {} {f})", settings.buy_heuristic.growth_fund_factor)
+        })
+        .collect();
+    eprintln!(
+        "screen: (#1516) EU split gap, a US split of the last 400 days its European line's chart lacks: {}",
+        if gaps.is_empty() { "none".to_string() } else { gaps.join(", ") }
+    );
     // the tilt fails SILENT (fetch errors -> factor None -> neutral): with the feed down every
     // stock quietly reverts to price-only ranks. Say what the tilt actually covered so a
     // degraded run is distinguishable from a normal one. Display-only.
@@ -4664,6 +4696,19 @@ fn parity_census(quotes: &[Quote], tuning: &config::BuyHeuristic) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (#1516) A US split counts up to 400 days back, and an own event up to 5 days off either way books it.
+    #[test]
+    fn split_gaps_name_the_recent_us_splits_the_own_chart_lacks() {
+        let d = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let today = d("2026-11-14");
+        let us = [(today - chrono::Duration::days(401), 3.0), (today - chrono::Duration::days(400), 50.0), (d("2026-06-10"), 2.0)];
+        assert_eq!(split_gaps(&[], &us, today), vec![us[1], us[2]]);
+        assert_eq!(split_gaps(&[(d("2026-06-10"), 2.0)], &us, today), vec![us[1]]);
+        assert_eq!(split_gaps(&[(d("2026-06-05"), 2.0)], &us, today), vec![us[1]]);
+        assert_eq!(split_gaps(&[(d("2026-06-15"), 2.0)], &us, today), vec![us[1]]);
+        assert_eq!(split_gaps(&[(d("2026-06-04"), 2.0), (d("2026-06-16"), 2.0)], &us, today), vec![us[1], us[2]]);
+    }
 
     /// (#1484) The census helpers: the spread of a set of gaps, the overlap of two books, and the census over two
     /// stub quotes, one with the walk's view and one without (it reads the one, says how many, and prints its bars).
