@@ -16355,6 +16355,10 @@ buy_heuristic:
                                  #   its first walk cutoff (8y and up). 36 = every receipt before (#1517),
                                  #   byte-identical; 12 is the young-names probe arm. Walk-only (RESCORE_FIXED).
                                  #   See the (#1517) block.
+  backtest_bucket_phase: 0       # (#1530) PRE-REGISTERED 2026-11-14, before any run: months the walk's half-year grid
+                                 #   is shifted by, read modulo 6. 0 = buckets open in January and July, every
+                                 #   receipt before (#1530), byte-identical; 1 to 5 are the calendar read's arms.
+                                 #   Walk-only (RESCORE_FIXED). See the (#1529) and (#1530) blocks.
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.
@@ -30858,7 +30862,36 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # NOT A RULER VARIANT under (#1338): no rule is graded here and no bar changes. It asks how well the ruler on file
 #   describes the plan the page serves.
 # OWNER QUESTION, one: (a) record only; (b) read the calendar on a grid-phase knob: (#1530), ten probes.
+# OWNER, 2026-11-14: (b). The knob is (#1530), inert at 0: ten probes and the control's two, row (#1531).
 # REVERT RULE: none; a record.
+
+# (#1530) THE GRID'S PHASE, PRE-REGISTERED 2026-11-14 before any run. Row: (#1531). Knob: `backtest_bucket_phase` (0),
+#   (#1529)'s answer (b), inert at 0.
+# WHAT IS ADDED: `backtest::bucket` reads the knob (`bucket_at`), so at k the buckets open k months after January
+#   and July: the cutoffs, every per-bucket cohort and the monthly-buying programs' starts (`bucket_opens`) move
+#   together. At 0 the key is `year * 2 + month0 / 6` as before and every golden is byte-identical. Walk-only
+#   (RESCORE_FIXED). No page reads it.
+# RUN: ten probes in one batch with the control's two, years="20 12 8": pit args="universe fund pit rivals", dead
+#   args="universe fund pit dead rivals"; knobs="backtest_bucket_phase=k" for k = 1 to 5; the control is k = 0.
+# READ, per lane and horizon, six phases side by side: the `top-10 excess/yr` mean, and at 20y the `S+inter`
+#   never-sell against index DCA mean; with each, the windows scored and the buckets, which should sit within a
+#   few percent of the control's.
+# SAID BEFORE THE RUN: 1. phase 0 is not the top of the six in all four 12y and 8y top-10 cells. 2. The six 12y
+#   top-10 readings span between 0.5 and 2.5 points in each lane ((#790) moved 20y by 0.9 with one regrid). 3.
+#   S+inter never-sell stays above index DCA at all six phases in both lanes.
+# RULE, fixed now. It informs and cannot decide: no rule is graded on a phase and nothing ships. The shipped book
+#   alone is read, so the (#1293) holdout is not spent.
+#   THE GRID FLATTERS: phase 0 is the top of the six in all four 12y and 8y top-10 cells and beats the mean of the
+#     other five by 1.0 or more in each -> ONE owner question: (a) keep the grid and write the six-phase mean
+#     beside each headline from now on; (b) a ruler change in (#790)'s manner, the gate reading all six phases.
+#   THE BOOK'S SIGN TURNS: S+inter never-sell sits under index DCA at three or more phases in both lanes -> ONE
+#     owner question on the book against the tracker, with the six rows.
+#   anything else -> RECORD: the calendar sits inside the noise the (#1333) freeze already prices.
+#   Eyesight: one phase tops a cell one time in six by luck, and four cells of two lanes are not four draws, so
+#   the 1.0 margin carries the rule, not the rank.
+# BUILD: written upstream without a compiler; here `cargo clippy --locked --all-targets -- -D warnings` is clean
+#   on it, and the probe tag's CI is the first run of its tests.
+# REVERT RULE: the knob at 0 is every receipt before it; delete it and `bucket_at(d, 0)` is `bucket`.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
