@@ -30508,6 +30508,17 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # RULE, standing: a named line -> ONE owner question with its numbers: restate the page's EPS by the US line's
 #   list, as the walk does, or keep. Nothing ships from this block.
 # REVERT RULE: none; display only.
+# RESULT, 2026-11-14, first live run (Pages 43609842304, 6dd38b7): the line named 6 and none is a real split.
+#   Five are spin-offs that Yahoo books on the US line as a split: ALD0.DE (HON 2025-10-30, 1.061, Solstice),
+#   BOX.DE (BDX 2026-02-10, 1.272, Waters), CTP2.DE (CMCSA 2026-01-05, 1.067, Versant), FDX.DE (FDX 2026-06-01,
+#   1.241, FedEx Freight) and MHL.DE (SPGI 2026-07-01, 1.057, Mobility Global). ZEG.F is AZN's switch from the
+#   ADS to the ordinary share on the NYSE (2026-02-02, 0.5); ZEG.F trades the ordinary share, so its basis is
+#   already right. Restating by the US list as the walk does (only a 10-K filed before the event moves) changes 2:
+#   BOX.DE peg_yield 16.18 -> 12.72 (BDX 10-K filed 2025-11-25) and MHL.DE 32.99 -> 31.21 (SPGI 10-K filed
+#   2026-02-11). Both fall, and none of the 6 holds a row on any table of the live page (data.json generated
+#   2026-11-14T16:11:26Z), so 0 buy seats move either way.
+# VERDICT, owner 2026-11-14: KEEP, record only. From now on a spin-off or ADS-swap hit is recorded without a
+#   question; only a whole-number split (CMG's 50:1 kind) brings the owner question back.
 
 # (#1517) THE YOUNG SEATS, SAMPLED, PRE-REGISTERED 2026-11-14 before any run. Row: (#1518). Knob:
 #   `walk_min_history` (36), on the owner's pick (c) in (#1514), "Probe young names".
