@@ -496,14 +496,18 @@ function tilt(rows) {
   const top = (kind, floor) => (rows || []).find((r) => at(r, "KIND") === kind && parseFloat(at(r, "BUY%")) >= floor);
   const s = top("sector", SECTOR_TILT);
   const c = top("currency", CURRENCY_TILT);
+  const e = top("US estate", 0.1); // (#1526) 0.1 = the smallest share the cell can show: any US share warns, "0.0%" does not
   return [
     s && "⚠ " + at(s, "BUY%") + " of the buy list (BUY%) sits in one sector (industry group), " + at(s, "NAME") + ": companies in one sector rise and fall together, so treat them as ONE bet when deciding how much to put in",
     c && "⚠ " + at(c, "BUY%") + " of the buy list (BUY%) trades in one currency, " + at(c, "NAME") + ": for a euro holder that is one bet on the exchange rate",
+    e && "⚠ " + at(e, "BUY%") + " of the buy list (BUY%) is shares of US companies: if you are not a US citizen or resident, the US taxes these at death, 26-40 % of the part above $60,000; a fund domiciled in Ireland or Luxembourg that holds the same companies is outside it",
   ].filter(Boolean);
 }
 console.assert(
   ((r) => tilt([r("sector", "IT", "84.0%"), r("currency", "USD", "93.0%")]).length === 2 &&
-    tilt([r("sector", "IT", "40.0%"), r("currency", "USD", "79.9%")]).length === 0 && tilt(undefined).length === 0)(
+    tilt([r("sector", "IT", "40.0%"), r("currency", "USD", "79.9%")]).length === 0 && tilt(undefined).length === 0 &&
+    tilt([r("US estate", "US companies", "70.0%")]).length === 1 && tilt([r("US estate", "US companies", "0.0%")]).length === 0 &&
+    tilt([r("sector", "IT", "84.0%"), r("currency", "USD", "93.0%"), r("US estate", "US companies", "0.1%")]).length === 3)(
     (kind, name, w) => [["KIND", kind], ["NAME", name], ["BUY%", w]],
   ),
   "the tilt banner misreads the exposure rows",

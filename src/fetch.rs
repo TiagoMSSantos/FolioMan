@@ -6624,6 +6624,37 @@ pub async fn sec_peo_pay(client: &Client, urls: &Urls, ticker: &str) -> Option<f
     found
 }
 
+/// (#1526) The state or country a company is incorporated in, from the submissions JSON's top-level
+/// `stateOfIncorporation`: a US State by its USPS letters (DC included), a foreign filer by EDGAR's own
+/// country code (L2 Ireland, X0 UK, P7 Netherlands ...), for the page's `US estate` row (screen.rs
+/// `estate_row`). A holder who is not a US citizen or resident owes US estate tax on shares of a
+/// corporation organized in a State or DC wherever they trade (a Xetra twin counts), but not on an Irish
+/// plc listed in New York, so neither the venue nor the ticker answers it. One GET against the run's SEC
+/// budget.
+///
+/// DISK-CACHED (`.sec_cache/{ticker}_inc1.json`) for 30 days, `null` included: a charter moves once in
+/// years. Only an ANSWER is cached, a submissions document with its code or with none. A spent budget, an
+/// unmapped ticker or a failed GET writes nothing, so the next run retries (#377). `#[mutants::skip]`:
+/// network-bound, and the row it feeds is display only.
+#[mutants::skip]
+pub async fn sec_incorporation(client: &Client, urls: &Urls, ticker: &str) -> Option<String> {
+    use std::sync::atomic::Ordering;
+    let cache = sec_cache_path(&format!("{ticker}_inc1"));
+    evict_if_stale(&cache, StdDuration::from_secs(30 * 24 * 3600));
+    if let Some(c) = std::fs::read_to_string(&cache).ok().and_then(|s| serde_json::from_str::<Option<String>>(&s).ok()) {
+        return c; // cache hit (null included) -> no network, no budget spend
+    }
+    let cik = sec_cik(client, urls, ticker).await.filter(|_| SEC_FETCHES.fetch_add(1, Ordering::Relaxed) < SEC_FETCH_BUDGET)?;
+    let v = sec_get_json(client, &urls.sec_submissions.replace("{cik}", &cik), &urls.sec_user_agent).await?;
+    let state = v.get("stateOfIncorporation")?.as_str()?.trim(); // no field = not a submissions document, so no answer
+    let found = (!state.is_empty()).then(|| state.to_string());
+    if let Some(dir) = cache.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&cache, serde_json::to_string(&found).unwrap_or_default());
+    found
+}
+
 /// Annual `FundRow`s for a US ticker from SEC XBRL company-facts, with the per-share lines the API drops
 /// filled back in from the filing itself. The fallback runs ONLY when the NEWEST row has no EPS, so the
 /// healthy filers pay nothing for it; the ones that need it are all multi-class or partnership-structured.
@@ -13576,6 +13607,39 @@ pub(crate) mod tests {
         let form4_gets = requests.try_iter().filter(|r| r.starts_with("GET /1652044/")).count();
         assert_eq!(form4_gets, SEC_FORM4_CAP, "one GET per Form 4, no more than the cap");
         assert_eq!(read.map(|t| t.len()), Some(SEC_FORM4_CAP));
+    }
+
+    /// (#1526) `sec_incorporation` reads the top-level `stateOfIncorporation`, trimmed, and banks an ANSWER
+    /// only: a code, or a filing that names none (`null`). A repeat is served from disk with no GET (two
+    /// requests across four calls), and a document with no such field or a failed GET banks nothing, so
+    /// the next run retries (#377). AAPL and GOOGL, whose `_inc1` files no other test touches.
+    #[tokio::test]
+    async fn sec_incorporation_banks_an_answer_and_only_an_answer() {
+        seed_cik_map();
+        let (aapl, googl) = (sec_cache_path("AAPL_inc1"), sec_cache_path("GOOGL_inc1"));
+        let _ = (std::fs::remove_file(&aapl), std::fs::remove_file(&googl));
+        let (base, client, asked) = routed_stub(vec![
+            ("sub/CIK0000320193.json", r#"{"stateOfIncorporation": " DE "}"#),
+            ("sub/CIK0001652044.json", r#"{"stateOfIncorporation": ""}"#),
+            ("odd/CIK0000320193.json", r#"{"message": "slow down"}"#),
+        ]);
+        let mut urls = stub_urls(&base);
+        urls.sec_submissions = format!("{base}sub/CIK{{cik}}.json");
+        let first = (sec_incorporation(&client, &urls, "AAPL").await, sec_incorporation(&client, &urls, "GOOGL").await);
+        let banked = (std::fs::read_to_string(&aapl).ok(), std::fs::read_to_string(&googl).ok());
+        let again = (sec_incorporation(&client, &urls, "AAPL").await, sec_incorporation(&client, &urls, "GOOGL").await);
+        let gets = asked.try_iter().filter(|r| r.starts_with("GET /sub/CIK")).count();
+        let _ = (std::fs::remove_file(&aapl), std::fs::remove_file(&googl));
+        urls.sec_submissions = format!("{base}odd/CIK{{cik}}.json");
+        let odd = sec_incorporation(&client, &urls, "AAPL").await; // JSON, but no `stateOfIncorporation`
+        urls.sec_submissions = format!("{base}nope/{{cik}}");
+        let failed = sec_incorporation(&client, &urls, "GOOGL").await; // unrouted: a 404 with no body
+        let kept = (aapl.exists(), googl.exists());
+        assert_eq!(first, (Some("DE".to_string()), None), "trimmed code; an empty one is None");
+        assert_eq!(banked, (Some(r#""DE""#.to_string()), Some("null".to_string())), "both answers banked, the None too");
+        assert_eq!(again, first, "the repeat reads the same from disk");
+        assert_eq!(gets, 2, "and costs no GET");
+        assert_eq!((odd, failed, kept), (None, None, (false, false)), "no answer, nothing banked");
     }
 
     /// (#450) The first date still ahead, today included, trailing period or comma stripped; a past
