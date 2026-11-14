@@ -30337,6 +30337,18 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   hurt this ruler; it goes to the owner, and no floor is lowered to turn it green. All green: the owner decides the
 #   ship. A ship blesses before the push, on a probe tag (#1464), and its rebless carries every pin; a floor rises
 #   only by (#316)/(#1236).
+# RESULT, 2026-11-14, probe tag probe-r25c on 17e70f4 (CI 43592416446, bless 43592418311): the bless moves
+#   backtest-20.golden alone, its DCA lines; the other 12 goldens are byte-identical. Fixture, main to fix: top-10
+#   never-sell +8.3 to +8.2, roll edge +1.2 (med +1.1) to +1.3 (med +1.3), never-sell vs DCA +2.5 to +2.3 (worst
+#   +1.4 to +1.1); SIZED roll +9.7 to +9.9, edge +1.6 (med +1.7) to +1.8 (med +1.8), never-sell vs DCA +2.2 to +2.3
+#   (worst +0.0 to +0.2), Série E 93 % (54 of 58) to 91 % (53). Gate on real data: every gated reading equals main's
+#   at 38c915b, SIZED +6.8, S+inter +10.6 (median +9.8), Série E 100 % at 20y, 96 % at 12y, 93 % at 8y and on the 8y
+#   fund leg; one print-only median moves, SIZED +5.9 to +5.8 (S+inter minus SIZED +3.9 to +4.0). Every floor is
+#   green; the only red test is the 20y golden pin, as expected before the rebless.
+# SAID BEFORE, read: 1. held: the 20y DCA lines alone move; the GUARD and the other goldens are byte-identical.
+#   2. held: every reading lands within 1.0, and the gated ones do not move.
+# VERDICT: SHIPPED 2026-11-14 on the owner's word ("Ship it"); the rebless carries backtest-20.golden, the one pin
+#   that went red.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
