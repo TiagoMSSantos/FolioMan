@@ -30831,6 +30831,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Saturday line or no Sunday line is not read; the journal's own prices, not checked against a close by day.
 # REVERT RULE: delete the ci.yml step; the mode stays a reader.
 
+# (#1529) THE WALK'S CALENDAR, RECORD, 2026-11-14. No run. Read from the code, on a question (#1522) raised: what does
+#   the walk see of a book that changes inside a month?
+# TWO FACTS no receipt has read:
+#   1. EVERY CUTOFF IS A JANUARY OR A JULY BAR. Since (#790) `backtest::cutoffs` yields the bar that opens each
+#      half-year `bucket` (year * 2 + month0 / 6). On a monthly series that is the January or the July bar, stamped
+#      on the 1st and holding the month's last close. Every row read since 2026-10-20 (the gate, the BOOK lines, the
+#      paper route's guards, (#1457)'s book of 10, (#1479)'s head weight) is a read of books formed on those two
+#      closes. Since then no other month has formed a book.
+#   2. THE MONTHLY-BUYING RULER BUYS A BOOK UP TO FIVE MONTHS OLD. Its books are `walk(0)`, the same grid.
+#      `month_pool` hands a buy on date d each name's latest cutoff in the six months to d, and `px_at` prices it
+#      on the first bar at or after d. So the January and July lots buy a book scored on the close they pay, and
+#      the February to June lots buy January's book at their own month's close: one to five months old, 2.5 on the
+#      mean. The page's book is scored on the day's close.
+# WHAT FOLLOWS:
+#   - Between two cutoffs the walk's book does not change, so nothing that moves the page's book inside a half-year
+#     is in any ruler row: the head's seats ((#1522)), the brake's read of the day's close, the 12-7 key's raw end.
+#     The walk reads them twice a year, on the two closes above.
+#   - (#821) read how far a book moves in six months: 16 to 19 % of its slots hold the same name at the next cutoff.
+#     A five-month-old book and the page's are mostly different names.
+#   - SIZED, not measured. For a never-sell lot held 12 to 20 years, buying the same ten names up to five months
+#     late moves its row by the book's excess over those months spread over the hold: 3 points of early excess is
+#     about 0.2 %/yr at 15 years, inside what (#1333) already calls blind. So fact 2 is unlikely to move a
+#     monthly-buying row by itself. Fact 1 is the open one: how much of each number on file is the calendar's has
+#     no read, and (#790) moved the 20y top-10 excess +4.5 -> +3.6 with one regrid.
+# NOT A RULER VARIANT under (#1338): no rule is graded here and no bar changes. It asks how well the ruler on file
+#   describes the plan the page serves.
+# OWNER QUESTION, one: (a) record only; (b) read the calendar on a grid-phase knob: (#1530), ten probes.
+# REVERT RULE: none; a record.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
