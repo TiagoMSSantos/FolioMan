@@ -30808,8 +30808,15 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   Funds and coins are not counted. When no stock answers (offline), there is no row, so the goldens and the
 #   offline tests do not move. The page's warnings add one line when the row shows 0.1 % or more.
 # BUY SHARES: none move; the row reads the book after it is sized.
-# CHECK before Pages: a Screen A/B on the probe tag with the no-op knob book_names=10: CONTROL holds, 0 knob
-#   cells, the arm's book is the live book, and the payload carries the row with EDGAR's codes.
+# CHECK before Pages: a Screen A/B on the probe tag with the no-op `print_parity=true` (screen-ab refuses
+#   book_names=10, the shipped value): CONTROL holds, 0 knob cells, the arm's book is the live book, and the
+#   payload carries the row with EDGAR's codes.
+# RESULT 2026-11-14: probe-r28 CI 43642569105 green; A/B 43642541939: CONTROL holds, 0 knob cells in 20 tables
+#   (one `week` Bitcoin row moved with the coin's price). The row reads the same in c1, arm and c2: 91.3 %, nine
+#   stocks organized in a State (FTNT SNDK APC.DE WDC LAR0.DE at 16.59, LU2.DE DVA NVD.DE MTE.DE at 2.07), then
+#   "no SEC answer: STX": EDGAR's submissions for Seagate Technology Holdings plc, an Irish plc, carry an empty
+#   `stateOfIncorporation`. BTC's 6.67 % is outside by design. The arm's book is the live page's (Pages
+#   43642307567 on 0b68dcc, 21:25 UTC): the same ten stocks at the same weights, and BTC. No seat moves.
 # REVERT RULE: delete the call site, `estate_row`, `US_STATES`, `sec_incorporation` and the page line.
 
 # (#1527) THE LATE READ TRIPWIRE, PRE-REGISTERED 2026-11-14 before the line it first reads. Row: (#1528). No knob
@@ -30892,6 +30899,27 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # BUILD: written upstream without a compiler; here `cargo clippy --locked --all-targets -- -D warnings` is clean
 #   on it, and the probe tag's CI is the first run of its tests.
 # REVERT RULE: the knob at 0 is every receipt before it; delete it and `bucket_at(d, 0)` is `bucket`.
+
+# (#1531) THE GRID'S PHASE, RESULT, 2026-11-14, the row of (#1530). Probe tag probe-r29 at 6eb2183: CI
+#   43643516265 green; twelve probes green, pit 43643838248 to 43643878706 and dead 43643886443 to 43643926636,
+#   k = 0 to 5 in that order.
+# READ, the top-10 excess/yr at k0 to k5 (the six-phase mean; k0 minus the other five's mean):
+#   pit  20y +1.5 +1.8 +1.4 +1.2 +0.9 +1.3 (1.35; +0.18)   dead 20y +1.2 +1.2 +1.1 +0.7 +0.8 +1.1 (1.02; +0.22)
+#   pit  12y +2.5 +2.5 +2.4 +2.7 +2.2 +2.2 (2.42; +0.10)   dead 12y +1.7 +1.4 +1.5 +1.3 +1.5 +1.4 (1.47; +0.28)
+#   pit   8y +2.8 +2.6 +2.2 +2.9 +2.6 +2.8 (2.65; +0.18)   dead  8y +2.1 +1.4 +1.1 +1.7 +1.5 +1.9 (1.62; +0.58)
+#   20y S+inter never-sell minus index DCA: pit +4.7 +4.9 +5.1 +4.6 +4.3 +3.9; dead +3.8 +3.8 +3.1 +3.0 +4.1 +2.4.
+#   Windows scored and cutoffs sit within -1.2 % and +4.8 % of k0's; buckets 21-22 (20y), 37-38 (12y), 45-46 (8y).
+# THE RULE: the grid flatters in no cell: k0 tops two of the four 12y and 8y cells (dead's), and leads the other
+#   five's mean by 0.10 to 0.58, never by 1.0. The book's sign turns at no phase in either lane. -> RECORD.
+# SAID BEFORE: 1 HELD: k0 tops dead's 12y and 8y, not pit's. 2 MISSED LOW: the 12y spans are 0.5 (pit) and 0.4
+#   (dead), under the 0.5 to 2.5 said. 3 HELD: S+inter never-sell sits above index DCA at all six phases in both
+#   lanes, by +2.4 at the least.
+# WHAT IT SAYS: the January/July grid reads above the other five phases' mean in all six cells, by 0.1 to 0.6
+#   points, so each headline on file overstates the six-phase mean by that much: inside what (#1333) already calls
+#   blind. Six cells of two overlapping lanes are not six draws. The 12y worst window is k0's in both lanes (-8.6
+#   and -7.2, against -1.1 to -6.0): a worst-window figure on file is one calendar's.
+# NOTHING MOVES: the knob stays 0, and nothing is asked.
+# REVERT RULE: none; a record.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
