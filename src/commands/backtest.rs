@@ -1004,7 +1004,7 @@ fn bench_path(dump: &std::path::Path) -> std::path::PathBuf {
 /// row that changed it would print the old run under a new name. Grade these with a probe run per arm.
 /// (#1284) The walk also builds `event_flags` from `growth_event_months` and picks `quote.fund_factor` by
 /// `growth_fund_factor`; `rescore` rebuilds neither.
-const RESCORE_FIXED: [&str; 19] = [
+const RESCORE_FIXED: [&str; 20] = [
     "backtest_live_window_years", // (#1391) range/drawdown/R² are computed in the walk's `backtest_quote`
     "payout_guard",               // (#1477) the as-of payouts are guarded in the walk's `backtest_quote` too
     "anchor_cadence_aware",       // (#1488) every perf leg is anchored in the walk's `backtest_quote`
@@ -1024,6 +1024,7 @@ const RESCORE_FIXED: [&str; 19] = [
     "fund_source",
     "growth_event_months",
     "growth_fund_factor",
+    "walk_min_history", // (#1517) sets each name's first cutoff, so it decides which samples exist
 ];
 
 /// (#1227) One line of a [`write_samples`] dump, read back.
@@ -2433,7 +2434,7 @@ pub async fn run(args: Vec<String>) {
     // (#18) so measure_endpoint's trading-days smoothing span covers the same calendar time on
     // monthly bars as it does on the live daily closes (train == serve).
     core::set_measure_cadence(cadence);
-    let min_history = if monthly { 36 } else { MIN_HISTORY }; // ~3y of bars before a cutoff to form the long trend
+    let min_history = if monthly { tuning.walk_min_history } else { MIN_HISTORY }; // ~3y of bars before a cutoff to form the long trend; (#1517) a knob on monthly bars
     // (#46) the universe's own ETF ticker set and ticker->GICS sector map. Both were fetched and thrown
     // away (`.0`) — they are the belt to the chart-meta braces below: a venue whose meta omits
     // `instrumentType` must not silently drop a fund back into the stock class, and `is_commodity`
@@ -6937,6 +6938,24 @@ fn report_winners(samples: &[Sample], bench: &(Vec<chrono::NaiveDate>, Vec<f64>)
     println!("  (#740) momentum half's held LOSERS by factor: {} slots, {lost} lost money", mom.len());
     for HeldLoserRow { factor, n_win, n_lose, med_win, med_lose, auc } in held_loser_factors(&mom, usize::MAX, &FUND_FACTORS) {
         println!("    {factor:<21} winners n={n_win:<4} med {med_win:>9.2}   losers n={n_lose:<4} med {med_lose:>9.2}   AUC {auc:>5.2}");
+    }
+    // (#1517) A warmup under the page's POOL cut lets the walk sample names it calls young: grade the momentum
+    // half's young seats against the rest, by the page's own rule, and name them so a chart that starts late
+    // on an old name can be told from a real IPO or spin-off. At 36 no seat is young, so nothing prints.
+    if (tuning.walk_min_history as f64) < super::screen::WALK_FIRST_CUTOFF_MONTHS {
+        let young = |s: &Sample| s.quote.age_years.is_some_and(|a| (a * 12.0).round() < super::screen::WALK_FIRST_CUTOFF_MONTHS);
+        let (y, rest): (Vec<&Sample>, Vec<&Sample>) = mom.iter().map(|(s, _)| *s).partition(|s| young(s));
+        println!("  (#1517) momentum half's seats under {} months on the chart, warmup {} bars:", super::screen::WALK_FIRST_CUTOFF_MONTHS, tuning.walk_min_history);
+        let side = |v: &[&Sample]| cohort_side(v.iter().map(|s| s.relative).collect());
+        print_cohorts(&[("young seats vs the rest", side(&y), side(&rest))]);
+        let mut seats: BTreeMap<&str, usize> = BTreeMap::new();
+        for s in &y {
+            *seats.entry(s.quote.ticker.as_str()).or_default() += 1;
+        }
+        let mut seats: Vec<(&str, usize)> = seats.into_iter().collect();
+        seats.sort_by_key(|a| std::cmp::Reverse(a.1)); // stable: ticker order on ties
+        let seats: Vec<String> = seats.iter().map(|(t, n)| format!("{t} {n}")).collect();
+        println!("  (#1517) young seats by name: {}", seats.join(", "));
     }
 }
 

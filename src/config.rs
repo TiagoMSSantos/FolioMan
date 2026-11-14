@@ -152,6 +152,12 @@ fn is_off_years(y: &f64) -> bool {
     *y == 0.0
 }
 
+/// (#1517) The walk's shipped warmup serialises nothing, so every `tuning_fp` journaled before the knob
+/// existed still matches.
+fn is_shipped_min_history(n: &usize) -> bool {
+    *n == BuyHeuristic::default().walk_min_history
+}
+
 impl Sizing {
     /// (#285) How many CORE rows actually RECEIVE money — the knob read once, with its "0 is read as
     /// 1" rule applied here and nowhere else (non-negotiable #4). Two surfaces depend on this number
@@ -656,6 +662,8 @@ pub struct BuyHeuristic {
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1477) still matches
     pub payout_guard: bool, // (#1477) drop the Yahoo payouts `core::payout_flags` flags (D1 a duplicate row within 7 days of the one before it, D2 a payout above a quarter of the close before it or 50-150x off the name's median ratio) before `dividend_sums` reads them, at both sites through `payout_guard()`: the page at its last bar, the walk on each cutoff's own slice. Main read every payout raw: `parse_chart` keeps each `events.dividends` row and (#1472) moved London prices onto one unit but no payout. Reaches the score only through the capped dividend term (at most 0.5 x 6 x keep, about 2.2 points) and the DIV, PAYOUT% and FCF-PAY% columns. false = every payout as Yahoo serves it, byte-identical, and the DEFAULT; `backtest ... payouts` prints the census
     pub backtest_tr_ruler: bool, // (#804) the RULER half of `use_adjusted_close`, without its selection half: every backtest forward return compounds the dividends paid inside its window (each reinvested at the close before its ex-date) and the book is graded against ^SP500TR instead of ^GSPC. Selection still reads price-only closes, so an arm graded on it changes only what it chooses. Cutoffs the ^SP500TR series does not reach (it starts 1988) are dropped, from every arm alike. false = the price-only ruler every receipt before (#804) was graded on, byte-identical, and the DEFAULT
+    #[serde(skip_serializing_if = "is_shipped_min_history")] // 36 serialises nothing, so every `tuning_fp` journaled before (#1517) still matches
+    pub walk_min_history: usize, // (#1517) monthly bars a name needs before its first walk cutoff: `backtest::run`'s `min_history` on the monthly series (8y and up), which under `long_chart_explicit_span` is also `thin_volume`'s floor. The daily series keeps `MIN_HISTORY`. The page's POOL line (#1514) reads a name under `screen::WALK_FIRST_CUTOFF_MONTHS` (36) months on the walk's chart as one no cutoff has sampled; a lower value lets the walk sample such names, and `backtest … winners` then splits the momentum half's seats young against the rest. Walk-only (RESCORE_FIXED). 36 = every receipt before (#1517), byte-identical, and the DEFAULT
 
     // --- CRYPTO market-sentiment damp (Bitcoin NUPL): a whole-market greed gauge already fetched for
     //     the screen footer; high NUPL = euphoria/top -> shrink crypto scores in BOTH lanes. ---
@@ -895,6 +903,7 @@ impl Default for BuyHeuristic {
             anchor_cadence_aware: false,   // (#1488) OFF = every leg's anchor as before, every golden byte-identical
             payout_guard: false,           // (#1477) OFF = every payout as Yahoo serves it, every golden byte-identical
             backtest_tr_ruler: false,      // (#804) OFF = the price-only ruler, every golden byte-identical
+            walk_min_history: 36,          // (#1517) the walk's ~3y warmup on monthly bars; 12 is the young-names probe arm
             nupl_euphoria: 0.5,            // (4) NUPL > 0.5 = market greed -> start damping crypto
             nupl_damp_floor: 0.5,          // (4) at NUPL 1.0 (peak euphoria) crypto scores are halved
             nupl_capitulation: 0.25,       // (4) NUPL < 0.25 = fear/accumulation -> start boosting crypto (buy-the-fear)
@@ -2967,6 +2976,12 @@ mod tests {
     #[test]
     fn only_zero_years_is_off() {
         assert!(is_off_years(&0.0) && !is_off_years(&10.0));
+    }
+
+    /// (#1517) Only the shipped warmup serialises nothing.
+    #[test]
+    fn only_36_min_history_is_shipped() {
+        assert!(is_shipped_min_history(&36) && !is_shipped_min_history(&12));
     }
 
     /// (#1359) On the shipped settings, an upload that lists one new term keeps the shipped six and adds it,

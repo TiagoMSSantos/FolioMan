@@ -16351,6 +16351,10 @@ buy_heuristic:
                                  #   the shipped book keeps a +3-4 pts/yr edge over (j)'s benchmark and no tested knob or rival
                                  #   beats it. The worst-window veto (row worst >= ctl worst - 1.0) and the Serie E reading
                                  #   (below its floor AND below the same-mode ctl) were fixed in writing before any run ended.
+  walk_min_history: 36           # (#1517) PRE-REGISTERED 2026-11-14, before any run: monthly bars a name needs before
+                                 #   its first walk cutoff (8y and up). 36 = every receipt before (#1517),
+                                 #   byte-identical; 12 is the young-names probe arm. Walk-only (RESCORE_FIXED).
+                                 #   See the (#1517) block.
   use_adjusted_close: false      # (B) REVERTED 2026-06-28: backtest 12 universe edge unchanged (raw
                                  #   -100337371.5 vs adj -100337372.0), OOS halves identical (+0.09/-0.05).
                                  #   No improvement → golden rule reverts. Flip true only if a re-run lifts edge.
@@ -30504,6 +30508,35 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # RULE, standing: a named line -> ONE owner question with its numbers: restate the page's EPS by the US line's
 #   list, as the walk does, or keep. Nothing ships from this block.
 # REVERT RULE: none; display only.
+
+# (#1517) THE YOUNG SEATS, SAMPLED, PRE-REGISTERED 2026-11-14 before any run. Row: (#1518). Knob:
+#   `walk_min_history` (36), on the owner's pick (c) in (#1514), "Probe young names".
+# WHY: the page's momentum half seats names from about 11 months listed (SNDK, 1.7y, seat 2, 16.59 %), and the
+#   walk starts a name's cutoffs after its 36th monthly bar, so no receipt has graded a seat that young ((#1514)).
+# WHAT IS ADDED: the knob sets that warmup on monthly bars (8y and up; the daily series keeps `MIN_HISTORY`) and,
+#   under `long_chart_explicit_span`, `thin_volume`'s floor with it. Below 36, `backtest ... winners` prints one
+#   cohort row after (#740): the momentum half's seats on names under 36 months on the walk's chart (the page's
+#   POOL rule, `screen::WALK_FIRST_CUTOFF_MONTHS`) against its other seats, as n, mean and median excess
+#   (`Sample::relative`, the forward return minus its cutoff's peer mean) and hit rate, then the young seats by
+#   name. At 36 it prints nothing, so every golden stays byte-identical.
+# RUN: 4 probes in one batch, years="20 12 8": pit args="universe fund pit rivals winners", dead args="universe
+#   fund pit dead rivals winners"; knobs="walk_min_history=12" (the arm) and none (the control, 36).
+# READ: the arm's (#1517) row at each horizon in each lane. A horizon is readable when it holds 20 or more young
+#   seats in both lanes. The young list is read by eye: a seat on a name that traded for years before its chart
+#   starts is a chart artifact, named in RESULT, and a lane whose artifacts hold more than a third of its young
+#   seats is unreadable at that horizon. Printed beside it, deciding nothing ((#1333) cannot see one seat):
+#   `S+inter never-sell vs index DCA`, arm against control.
+# RULE, fixed now, on the readable horizons:
+#   young mean AND median at or above the rest's, in both lanes, at every one -> NO COST SEEN: the page keeps
+#     seating young names, as it does;
+#   young mean AND median below the rest's, in both lanes, at every one -> COST SEEN: a floor in the momentum
+#     half ((#1514)'s (b)) becomes ONE owner question, with these numbers;
+#   anything else -> INCONCLUSIVE; no readable horizon -> UNREADABLE. Nothing moves on either.
+#   It informs and cannot decide: the page does not change and the knob stays 36.
+# SAID BEFORE THE RUN: 20y holds under 20 young seats in each lane (its cutoffs end in 2006), so the reading rests
+#   on 12y and 8y; there the young seats trail the rest on the median (the long-run drift after a listing, Ritter
+#   1991) but not on the mean (a fat right tail): INCONCLUSIVE.
+# REVERT RULE: none; the knob is a probe instrument, 36 by default.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative

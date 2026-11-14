@@ -4440,9 +4440,9 @@ fn switch_lines(
     })
 }
 
-/// (#1514) The walk's first cutoff on a name comes after this many monthly bars (`backtest::run`'s `min_history`), so
-/// no cutoff has sampled a name younger than that.
-const WALK_FIRST_CUTOFF_MONTHS: f64 = 36.0;
+/// (#1514) The walk's first cutoff on a name comes after this many monthly bars (`backtest::run`'s `min_history`,
+/// the `walk_min_history` knob at its shipped 36), so no cutoff has sampled a name younger than that.
+pub(crate) const WALK_FIRST_CUTOFF_MONTHS: f64 = 36.0;
 
 /// (#1484) n, median and 90th percentile of `xs` (sorted in place); (0, NaN, NaN) when empty.
 fn spread(xs: &mut [f64]) -> (usize, f64, f64) {
