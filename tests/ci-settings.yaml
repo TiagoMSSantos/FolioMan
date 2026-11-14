@@ -23950,7 +23950,8 @@ buy_heuristic:
   anchor_cadence_aware: true     # (#1488) legs anchor on bars before the endpoint, None where cadence can't measure;
   #  arm 1 SHIPPED 2026-11-13 on the owner's word. REVERT: false.
   print_parity: false            # (#1484) the PARITY CENSUS after the page's tables: the walk's view, display only
-  serve_walk_1y: false           # (#1509) 1Y AND 6M from the walk's view (`core::serve_walk`); false = the page's own legs
+  serve_walk_1y: true            # (#1509) 1Y AND 6M from the walk's view (`core::serve_walk`); false = the page's own legs
+  #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
   serve_walk_5y: false           # (#1509) 5Y from the walk's view; false = the page's own leg
   serve_walk_20y: false          # (#1509) 20Y from the walk's view; false = the page's own leg
   serve_walk_ma: false           # (#1509) the ~200-week average's two reads from the walk's view; false = the page's own
@@ -30302,6 +30303,20 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the goldens move.
 # REVERT RULE: a switch set back to false. A RECORD switch goes to RETIRED in a code commit of its own, as (#1500)'s
 #   did.
+# RESULT, 2026-11-14, a Saturday: prices are frozen and c1 = c2 in both A/Bs, so the noise is 0 and the two compare.
+#   A/B 1 (run 43586428979, 1Y on): NVD.DE (seat 5, 16.59 %) and MTE.DE (seat 8, 2.07 %) enter; LU2.DE and LAR0.DE
+#   leave. STX goes from seat 8 to 4 (2.07 to 16.59 %); WDC from 4 to 6 and ASML from 5 to 7 (16.59 to 2.07 %).
+#   Scores: ASML 37.8 to 27.6, LAR0.DE 34.4 to 24.9 (rank 13), DVA 33.4 to 26.8, FTNT 49.4 to 47.1; NVD.DE holds
+#   32.5, so it rises from rank 11 as the three fall below it.
+#   A/B 2 (run 43587720487, all four on) against A/B 1's arm: LAR0.DE (seat 7) and M4I.DE (seat 9) enter; ASML and
+#   DVA leave, all at 2.07 %. The head five do not change. DVA's 5Y leg reads 70.4 on the walk (82.6 on the page),
+#   under the 75 floor; M4I.DE's reads 77.9 (64.6), over it; LAR0.DE's average read falls from 80.2 % above to 67.7 %,
+#   nearer the brake's free 60. Off the ten, 6MK.DE and 3V64.DE join the 30-row table as their 5Y legs cross 75.
+# SAID BEFORE, read: 1. wrong: A/B 1 moved four BUY NOW names. 2. held: A/B 2 drops DVA. 3. no swap: KLA.DE falls
+#   from rank 15 to 21 under 1Y and ROST stays above it.
+# VERDICT: 1Y SHIPPED 2026-11-14 on the owner's word ("Ship it"), `serve_walk_1y: true`; no golden moves, as the
+#   backtest never calls `quote_one`. 5Y, 20Y and MA, the owner's word 2026-11-14: "Test each alone first". Three
+#   Screen A/Bs on the ship tag, one switch each over the shipped 1Y, then one owner question per switch.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
