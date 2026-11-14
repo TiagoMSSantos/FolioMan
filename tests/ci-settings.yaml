@@ -30569,6 +30569,22 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   seating young names and the knob stays 36. The 4 cutoff years from 12y to 8y added 1 young seat in pit and
 #   none in dead, so a re-read waits years, not a re-run.
 
+# (#1519) SPIN-OFF FACTORS AGAINST THE 10-K'S YEAR, RECORD, 2026-11-14. No knob, no code, no run.
+# WHY: (#424)'s `restate_for_splits` divides a 10-K's EPS by the factors dated after its FILED day, which is ASC 260's
+#   rule for a split. A spin-off is no split. A 10-K whose year ended before the spin but was filed after it still
+#   counts the spun unit, and a 10-K whose year holds the spin counts the unit's months before it
+#   (`EarningsPerShareDiluted`, the first tag read, includes discontinued operations). Either way the parent's EPS
+#   reads rich against a close that no longer holds the unit, until the next 10-K. The walk keys the same way.
+# CENSUS, live universe 2026-11-14T16:11:26Z, non-whole factors of the last 800 days in each line's own list, plus
+#   (#1516)'s US-list hits. Year ended before the spin, filed after it: no US line; FDX.DE (FDX 2026-06-01, 1.241,
+#   year to 2026-05-31) and CTP2.DE (CMCSA 2026-01-05, 1.067, year to 2025-12-31). Spin inside the 10-K's year:
+#   DD (2.39), FTV (1.327), J (1.197 and 1.01), LEN (1.033), LEN-B (1.052), UL (0.888) and ALD0.DE (HON 1.061).
+#   None holds a stocks, etfs or BUY NOW row (LEN and LEN-B sit on the berkshire table only): 0 buy seats.
+#   WDC, seated, carries Sandisk's 1.323 (2025-02-24), but its 10-K year (to 2026-07-03) starts after the spin, so
+#   its EPS is clean. Its prior year still counts Sandisk, so its EPS growth reads low, not high.
+# VERDICT: RECORD, on the owner's (#1516) word that spin-off hits are recorded without a question.
+# REVERT RULE: none.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly
