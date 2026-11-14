@@ -30318,6 +30318,26 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   backtest never calls `quote_one`. 5Y, 20Y and MA, the owner's word 2026-11-14: "Test each alone first". Three
 #   Screen A/Bs on the ship tag, one switch each over the shipped 1Y, then one owner question per switch.
 
+# (#1511) THE DCA RULER'S BOOKS TAKE THE COHORT RANKS, PRE-REGISTERED 2026-11-14 before any run. No knob: one code
+#   line in `backtest::walk`.
+# WHY: the 20y walk builds two sample sets. `samples` (every per-horizon line, and the GUARD) gets
+#   `stamp_cohort_ranks` (#408). `books`, the DCA ruler's set (#311), got its own stamps in (#328), (#1277), (#1284)
+#   and (#1304), but never this one. So on the books `ey_pct`, `capx_pct`, `fcf_pct` and `mom61_pct` read None, the
+#   neutral fill, as do `value_composite`, `small_pct` and the other cohort twins; `low_dro` and `underdep` are not
+#   sector-demeaned. The four paper-route terms (#1339) score the page at 0.03 each, but no DCA line ever priced
+#   them, and their harm guard read `samples` alone (`FOLIOMAN_BACKTEST_SAMPLES` writes before the books exist).
+#   Found by the round-25 map of the page's inputs against the walk's. The owner's word, 2026-11-14: "Fix + probe
+#   first".
+# CHANGE: `stamp_cohort_ranks(&mut books)`, first among the books' stamps, as on `samples`.
+# SAID BEFORE THE RUN: 1. only the lines `report_roll` and `report_roll_ladder` print move, the DCA lines among
+#   them, at 20y alone (the books' only readers), with the goldens of 20y runs; every other line, the GUARD and
+#   every other horizon's golden are byte-identical. 2. the move is small, four terms at 0.03 each: each
+#   DCA reading lands within 1.0 of main's at 38c915b (SIZED +6.8, S+inter +10.6, median +9.8, Série E 100 %).
+# RULE, fixed now: the floors stand (SIZED 5.8, S+inter 9.6, Série E 90). A red floor is evidence that the terms
+#   hurt this ruler; it goes to the owner, and no floor is lowered to turn it green. All green: the owner decides the
+#   ship. A ship blesses before the push, on a probe tag (#1464), and its rebless carries every pin; a floor rises
+#   only by (#316)/(#1236).
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

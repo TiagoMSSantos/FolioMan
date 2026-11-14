@@ -3105,6 +3105,7 @@ pub async fn run(args: Vec<String>) {
     // (#328) the DCA ruler's books are a SECOND sample set, built after the stamp above, so they need
     // their own — otherwise the knob would move the lump-sum lane and leave the DCA lane (the ruler
     // (#311)/(#312)/(#313) actually ship against) quietly unarmed.
+    stamp_cohort_ranks(&mut books); // (#1511) first, as above: without it ey/mom61/capx/fcf_pct read the neutral fill here
     stamp_sector_cohorts(&mut books, &bench, tuning);
     stamp_top_dogs(&mut books); // (#1277) for the same reason
     stamp_regime(&mut books, &bench); // (#1284) and the regime valve's, or an arm setting `growth_regime_slack_pct` prints the control's DCA lines
