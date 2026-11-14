@@ -23954,7 +23954,6 @@ buy_heuristic:
   #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
   serve_walk_5y: true            # (#1509) 5Y from the walk's view; false = the page's own leg
   #  SHIPPED 2026-11-14 on the owner's word. REVERT: false.
-  serve_walk_20y: false          # (#1509) 20Y from the walk's view; false = the page's own leg
   serve_walk_ma: false           # (#1509) the ~200-week average's two reads from the walk's view; false = the page's own
   growth_momentum_crash_slots: 10 # (#1243) momentum slots of every 10 in a crash bucket; 10 = no cap, the shipped book.
   #  Pre-registered 2026-10-31, one arm (1), one look; see the receipt.
@@ -30330,6 +30329,10 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   on the page, 66.9 on the walk). Off the ten, 48 names cross the 75 line, about 31 up and 17 down; 6MK.DE
 #   (rank 18) and 3V64.DE (rank 21) join the 30-row table.
 # VERDICT, 5Y: SHIPPED 2026-11-14 on the owner's word ("Ship it"), `serve_walk_5y: true`; no golden moves.
+# RESULT, A/B 4 (run 43592459822, 20Y alone over the shipped 1Y): the arm's BUY NOW list is both controls' to the
+#   share, so it moved no name and no share. As said before, the 20Y crossings sit off the 30-row table: the leg
+#   moves on 446 rows, and with it `fund.peg_yield` on 368.
+# VERDICT, 20Y: RECORD by the rule; `serve_walk_20y` went to RETIRED in a code commit of its own, as (#1500)'s did.
 
 # (#1511) THE DCA RULER'S BOOKS TAKE THE COHORT RANKS, PRE-REGISTERED 2026-11-14 before any run. No knob: one code
 #   line in `backtest::walk`.

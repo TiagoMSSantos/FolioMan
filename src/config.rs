@@ -650,8 +650,6 @@ pub struct BuyHeuristic {
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1509) still matches
     pub serve_walk_5y: bool, // (#1509) the same for the 5Y leg
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1509) still matches
-    pub serve_walk_20y: bool, // (#1509) the same for the 20Y leg
-    #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1509) still matches
     pub serve_walk_ma: bool, // (#1509) the same for the long average's two reads, `below_ma_pct` and `above_ma_pct` (the walk's average spans ~48 monthly bars, the page's ~1000 daily sessions)
     #[serde(skip_serializing_if = "std::ops::Not::not")] // off serialises nothing, so every `tuning_fp` journaled before (#1488) still matches
     pub anchor_cadence_aware: bool, // (#1488) (#188)'s named fix, the anchor that respects bar cadence: `core::horizon_changes` anchors each leg on bars before the last one only, and a leg whose window holds none falls back to the bar on or before its target only within max(half, 5) days, else reads None. Monthly history then reads 1D and 1W as None (today: a month's move and 0 %) and 1M off the bar before the endpoint; daily history reads as before but for a 1D leg across a closure over five days. One accessor (`anchor_cadence_aware()`) for the page and the walk. false = every leg as before, byte-identical, and the DEFAULT
@@ -893,7 +891,6 @@ impl Default for BuyHeuristic {
             print_parity: false,           // (#1484) off, no census and no extra view built
             serve_walk_1y: false,          // (#1509) OFF = the page's own legs and average, every golden byte-identical
             serve_walk_5y: false,          // (#1509) as above
-            serve_walk_20y: false,         // (#1509) as above
             serve_walk_ma: false,          // (#1509) as above
             anchor_cadence_aware: false,   // (#1488) OFF = every leg's anchor as before, every golden byte-identical
             payout_guard: false,           // (#1477) OFF = every payout as Yahoo serves it, every golden byte-identical
@@ -1633,9 +1630,10 @@ fn anchored_path(name: &str) -> PathBuf {
 /// (#1435) `growth_refuse_financials` and `growth_refuse_sector_top_dog` left the list again, as knobs, for the
 /// honest-bars question.
 /// (#1500) `anchor_seam_months`, retired by its own pre-registered rule: on, two growth scores moved.
+/// (#1509) `serve_walk_20y`, retired by its own pre-registered rule: on, its Screen A/B moved no BUY NOW name.
 /// An old overlay or a saved page upload that still names one is dropped here instead of failing
 /// `deny_unknown_fields`.
-pub(crate) const RETIRED: [&str; 49] = [
+pub(crate) const RETIRED: [&str; 50] = [
     "growth_min_net_margin",
     "growth_max_margin_swing",
     "growth_max_dilution_pct",
@@ -1685,6 +1683,7 @@ pub(crate) const RETIRED: [&str; 49] = [
     "growth_max_fail_pct",
     "growth_max_1a_change",
     "anchor_seam_months",
+    "serve_walk_20y",
 ];
 
 /// Drop every [`RETIRED`] key, at any depth: the knobs sit under `buy_heuristic:`.
@@ -2531,14 +2530,14 @@ pub fn print_parity() -> bool {
 }
 
 /// (#1509) free accessor read by `fetch::quote_one`: which of the walk's field groups the page reads in place of
-/// its own, in `core::serve_walk`'s order [1Y with 6M, 5Y, 20Y, the long average].
+/// its own, in `core::serve_walk`'s order [1Y with 6M, 5Y, the long average].
 #[mutants::skip] // the answer is the ambient config, which the --lib suite cannot choose
-pub fn serve_walk() -> [bool; 4] {
+pub fn serve_walk() -> [bool; 3] {
     use std::sync::OnceLock;
-    static FLAGS: OnceLock<[bool; 4]> = OnceLock::new();
+    static FLAGS: OnceLock<[bool; 3]> = OnceLock::new();
     *FLAGS.get_or_init(|| {
         let b = ambient().map(|s| &s.buy_heuristic);
-        b.map(|b| [b.serve_walk_1y, b.serve_walk_5y, b.serve_walk_20y, b.serve_walk_ma]).unwrap_or_default()
+        b.map(|b| [b.serve_walk_1y, b.serve_walk_5y, b.serve_walk_ma]).unwrap_or_default()
     })
 }
 
