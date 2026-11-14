@@ -25960,6 +25960,11 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   dead-leg row is graded. EXPECTED: under the new rates every 12y cutoff before 2014 still reads
 #   UNDER-COVERED on the dead share (the archive prices none of the 32 pre-2014 bankruptcies), and DN2's
 #   quarterly prices are what move them.
+# RESULT, written 2026-11-14 from the tree: applied as registered by the DN2 commit bf5ff3e ((#1314), 2026-11-03,
+#   "ALSO IN THIS COMMIT, per (#1312)"): `DISTRESS_PER_YEAR` reads 0.004 and `ACQUIRED_PER_YEAR` 0.012 in
+#   src/commands/backtest.rs. A change of two constants, not a graded row: (#1314), (#1320), (#1323) and (#1324)
+#   read the census against these floors. This line closes the block for `tools/queue.py`, which listed it as its
+#   one false positive since (#1490).
 
 # (#1311) MOMENTUM POND WITHOUT THE CROWD (S3), PRE-REGISTERED 2026-11-03 before any run. (#1304) re-ordered
 #   the WHOLE stock half by a few-marks momentum key and failed step 1, but `fresh_mom_k0` led every pit cell.
