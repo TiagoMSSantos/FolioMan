@@ -30363,6 +30363,68 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 # VERDICT: SHIPPED 2026-11-14 on the owner's word ("Ship it"); the rebless carries backtest-20.golden, the one pin
 #   that went red.
 
+# (#1512) THE WALK'S VIEW COUNTS ITS LAST MONTH ONCE, AND FRESH, PRE-REGISTERED 2026-11-14 before the re-run. A fix,
+#   no knob. Row: (#1513). It changes W, the walk's view of a name on the page: (#1484)'s census, (#1498)'s SPLIT
+#   and every field (#1509)'s switches serve. The backtest never reads W, so no golden moves. But since 38c915b and
+#   5be1de8 the page serves W's 6M, 1Y and 5Y legs, so this commit moves those cells on the page and can move a BUY
+#   NOW seat: it reaches Pages only on the owner's word.
+# THE DEFECT, three ways W on the page was not what a cutoff grades:
+#   1. TWICE. Yahoo serves the month in progress twice in a monthly chart: its own bar, stamped the 1st, and a live
+#      bar stamped with the last trade's time ((#843) exempts it; yfinance merges the pair in
+#      `fix_Yahoo_returning_live_separate`). `core::parity_walk_view` read the chart as served, so W's 5-bar
+#      endpoint (every leg of a year or more) held the month twice and dropped the fifth month back. A cutoff's
+#      slice holds each month once.
+#   2. STAMP. W's last bar was dated on the quote's day, so every anchor window sat that many days later than a
+#      cutoff's, whose last bar is dated on the 1st and closes at the month's end. On monthly bars a 10-day shift
+#      takes one more late bar into the 1Y window.
+#   3. STALE. `fetch` serves the long chart from its 7-day cache (`LONG_CACHE_TTL_DAYS`), which Pages restores
+#      (`.long_history_cache.span.json`); the page only ever read that chart's bars from before its daily window, so
+#      the age never mattered. W ends on it: a served leg would have priced the name where the cache left it, up to
+#      a week back. A Screen A/B fetches cold and cannot see this.
+# REPLAY, before any run, on the fixture's frozen monthly payloads (tests/fixture/.long_history_cache.span.json,
+#   fetched 2026-11-11 at 14:40 UTC): 188 of 197 charts serve the month twice (the other 9 are four mutual funds
+#   and five lines that last traded in an earlier month). The live close is `regularMarketPrice`; the bar before
+#   it closes a session's move away (median 0.50 %, p90 2.37 %). The live bar does not need an open market: 16
+#   lines last traded 24 hours or more before the fetch, each is still served twice, and 13 of them with both
+#   bars at one price. So a weekend run, as 2026-11-14's census was, holds the month twice too.
+#   Each field is read as served (A) and with one November bar on the 1st (B), stocks alone, |A - B| in points as
+#   median / p90: 1Y 2.22 / 9.61 (n 61), 5Y 2.61 / 13.55, 20Y 3.66 / 67.19, the stretch over the long average 0.95 /
+#   3.10, 6M 0.00. Largest 1Y moves, A -> B: MRNA +514.8 -> +463.8, INTC +95.0 -> +116.2, VRT +20.7 -> +35.5, ODFL
+#   +11.4 -> +24.0, B4NE.DE +17.3 -> +29.9.
+#   Against the walk itself: at each of the last 24 month ends the walk's own slice is the truth and B equals it;
+#   shape A there (the bar twice, the live one dated the month's last day) reads 1Y off by 3.27 / 10.73 (n 1447),
+#   5Y 2.95 / 12.70, 20Y 4.81 / 55.21. At 1Y the double count alone is 2.41 / 8.21, the stamp alone 1.05 / 4.98 on
+#   the 11th and 2.03 / 7.68 at a month's end. For scale: `accel` reads 1Y at weight 0.50, and (#1498)'s census
+#   read M-W at 1Y as 1.69 / 9.04 over every scored name with a view, the funds with the stocks.
+# THE FIX: `core::walk_bars`. The chart's last month keeps one bar, its last close under the month's first day (what
+#   yfinance's merge keeps); then every month from that one on closes where the page's own daily chart of this run
+#   last closed in it, so W's last close is the page's price and a month that began after the cache was written
+#   gets its own bar. No month before the chart's last one is touched. The daily chart is read only when the two
+#   charts price one share: its close on the monthly chart's last day must sit within 0.67 to 1.5 of that chart's
+#   last close ((#1476)'s band). A split the cached chart has not seen fails that, and the tail stays as cached: a
+#   week old at most, and on one share. A chart that is not monthly at its tail (a step under 20 days, as a
+#   `range=max` chart has) is read as served. `parity_walk_view` reads the view through it; `bar_check` keeps the
+#   chart as served, since BARS is a census of Yahoo's own bars.
+#   shortcut: the walk's cutoffs never meet this tail (each needs years of bars after it), so the backtest is not
+#   touched; early in a month W's last bar is days old where a cutoff's closes a full month, which no live read
+#   can mend; and the cached chart's dividends are not freshened, so W's dividend read can miss a payment of the
+#   cache's last week (none of (#1509)'s four groups reads it).
+# RUN: two Screen A/Bs at one time, knobs="print_parity=true serve_walk_1y=false serve_walk_5y=false" on each, so
+#   the census reads the page without W's legs, as (#1498)'s did (A/B 43569254493). One on this commit (tagged),
+#   one on 5be1de8: arm against arm is the census before and after the fix on one day's prices, and control
+#   against control is what this commit moves on the page as it would ship.
+# SAID BEFORE THE RE-RUN: 1. M-W at 1Y reads under 1.3 at the median and under 7.5 at p90 (1.69 / 9.04); a smooth
+#   replay of the fixture's stocks roughly halves it (5.85 / 22.00 to 3.22 / 13.58). 2. BOOK: W keeps 8 or more of
+#   the 10 score seats (7) and 9 or 10 momentum seats (9). 3. SPLIT: the 1Y group alone moves one score seat or
+#   none (two: -KEYS -FIX +EME +M4I.DE). 4. M-W at 10Y stays above 8 (10.62): that gap is the page's seam ((#1500)),
+#   not W's tail.
+# RULE, fixed now: the census and the `serve_walk_*` switches read `walk_bars` from this commit on. For (#1510): a
+#   BUY NOW move read on the chart as served is re-read on this commit before its owner question; a RECORD stays a
+#   RECORD. If SAID 1 fails, the tail is not what the census measured: record that; the fix stays, since one bar a
+#   month on the 1st is the walk's own shape either way. The page moves, control against control, earn ONE owner
+#   question with each BUY NOW name and share that moves; no push to main before the answer.
+# REVERT RULE: `parity_walk_view` reads `mdates` and `mcloses` directly again; no knob and no golden to restore.
+
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
 # return of names that pass the growth gates at a cutoff after FAILING them at the one before (newly

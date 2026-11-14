@@ -3854,12 +3854,61 @@ pub fn anchor_strict(dates: &[NaiveDate], closes: &[f64], target: NaiveDate, hal
     ((target - d[i]).num_days() <= half.max(5)).then_some(c[i])
 }
 
+/// (#1512) The long monthly chart with its last month as the walk reads a month: one bar, on the month's first day.
+/// Yahoo serves the month in progress twice in a monthly chart, as its own bar (stamped the 1st) and as a live bar
+/// stamped with the last trade's time ((#843)), market open or not, and `fetch` may serve the chart from its 7-day
+/// cache. Read as served, the walk's view of a name on the page ((#1484)'s W, the fields (#1509) serves) counted
+/// that month twice in its 5-bar endpoint, anchored every leg on the quote's day where a cutoff anchors on the 1st,
+/// and priced the name where the cache left it. Here the chart's last month keeps one bar, its last close under the
+/// month's first day, and every month from that one on then closes where `ddates`/`dcloses` (the page's daily chart
+/// of this run, ascending as `parse_chart` returns it) last closed in it: a month that began after the cache was
+/// written gets its own bar. The daily chart is read only when the two charts price one share: its close on the
+/// monthly chart's last day must sit within 0.67 to 1.5 of that chart's last close ((#1476)'s band), so a split the
+/// cached chart has not seen leaves the tail as cached. A chart under two bars, or whose last month opens under 20
+/// days after the bar before it (not monthly at its tail, as a `range=max` chart is), is returned as served.
+pub fn walk_bars(mdates: &[NaiveDate], mcloses: &[f64], ddates: &[NaiveDate], dcloses: &[f64]) -> (Vec<NaiveDate>, Vec<f64>) {
+    let n = mdates.len().min(mcloses.len());
+    let (mut dates, mut closes) = (mdates[..n].to_vec(), mcloses[..n].to_vec());
+    let first_day = |d: NaiveDate| NaiveDate::from_ymd_opt(d.year(), d.month(), 1).unwrap_or(d);
+    if n < 2 {
+        return (dates, closes);
+    }
+    // the last month's first bar: the bar before the last one when the two share a month
+    let k = if first_day(dates[n - 1]) == first_day(dates[n - 2]) { n - 2 } else { n - 1 };
+    if k == 0 || (dates[k] - dates[k - 1]).num_days() < 20 {
+        return (dates, closes);
+    }
+    let (last_day, stamp, close) = (dates[n - 1], first_day(dates[n - 1]), closes[n - 1]);
+    dates.truncate(k);
+    closes.truncate(k);
+    dates.push(stamp);
+    closes.push(close);
+    // one share on both charts: the daily close on (or last before) the monthly chart's last day against its last close
+    let same_day = ddates.partition_point(|d| *d <= last_day).checked_sub(1).and_then(|i| dcloses.get(i));
+    if !same_day.is_some_and(|d| (0.67..1.5).contains(&(close / d))) {
+        return (dates, closes);
+    }
+    for (d, c) in ddates.iter().zip(dcloses).filter(|(d, _)| first_day(**d) >= stamp) {
+        let month = first_day(*d);
+        if dates.last() == Some(&month) {
+            closes.pop();
+        } else {
+            dates.push(month);
+        }
+        closes.push(*c);
+    }
+    (dates, closes)
+}
+
 /// (#1502) The (#1484) census's walk view of a name: [`backtest_quote`] at the long monthly chart's last bar, at monthly
 /// cadence on the walk's anchor map, and that chart's bars against the daily one ([`bar_check`]). None when the monthly
 /// chart has no bar. A plain function so the suite reaches what `fetch::quote_one` builds only under `print_parity`.
+/// (#1512) The view reads the chart through [`walk_bars`], its last month once and fresh off the daily chart; the bar
+/// census reads the chart as served.
 pub fn parity_walk_view(ticker: &str, mdates: &[NaiveDate], mcloses: &[f64], mdivs: &[(NaiveDate, f64)], ddates: &[NaiveDate], dcloses: &[f64]) -> Option<(Quote, BarCheck)> {
-    let last = mcloses.len().checked_sub(1)?;
-    Some((backtest_quote(ticker, mdates, mcloses, mdivs, last, 12, &BTreeMap::new()), bar_check(mdates, mcloses, ddates, dcloses)))
+    let (wdates, wcloses) = walk_bars(mdates, mcloses, ddates, dcloses);
+    let last = wcloses.len().checked_sub(1)?;
+    Some((backtest_quote(ticker, &wdates, &wcloses, mdivs, last, 12, &BTreeMap::new()), bar_check(mdates, mcloses, ddates, dcloses)))
 }
 
 /// (#1502) The census's merged view: the page's own series at its last bar, at daily cadence on the walk's anchor map.
@@ -12696,6 +12745,86 @@ fn parity_views_read_the_last_bar() {
     let merged = parity_merged_view("W", &dd, &dcl, &[]).expect("a series with bars has a view");
     assert_eq!(merged.price_eur, Some(399.0), "the last daily close");
     assert!(parity_merged_view("W", &[], &[], &[]).is_none());
+}
+
+/// (#1512) The walk's bars: the month Yahoo serves twice keeps one bar, the live close under the month's first day;
+/// the daily chart then closes that month and any month after it, so a chart cached before a month end gets the
+/// month's true last close and the new month its own bar, and no month before the chart's last one is touched. One
+/// bar in the last month lands on the 1st too. A chart that is not monthly at its tail, or too short to tell, comes
+/// back as served.
+#[test]
+fn walk_bars_keep_one_fresh_bar_for_the_last_month() {
+    let day = |y: i32, m: u32, d: u32| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    let months: Vec<NaiveDate> = (1..=10).map(|m| day(2025, m, 1)).collect();
+    let mc: Vec<f64> = (1..=10).map(|m| 100.0 + f64::from(m)).collect();
+    // the first `keep` months of 2025, then `tail`
+    let with = |keep: usize, tail: &[(NaiveDate, f64)]| -> (Vec<NaiveDate>, Vec<f64>) {
+        (months[..keep].iter().copied().chain(tail.iter().map(|t| t.0)).collect(), mc[..keep].iter().copied().chain(tail.iter().map(|t| t.1)).collect())
+    };
+    // as served on 11 November: the month in progress twice, its own bar and the live one
+    let (served, sc) = with(10, &[(day(2025, 11, 1), 120.0), (day(2025, 11, 11), 121.0)]);
+    assert_eq!(walk_bars(&served, &sc, &[], &[]), with(10, &[(day(2025, 11, 1), 121.0)]), "one November bar: the live close under the 1st");
+    // the page's daily chart closes October at 110.7 and November at 123
+    let dd = [day(2025, 10, 27), day(2025, 10, 30), day(2025, 10, 31), day(2025, 11, 3), day(2025, 11, 12)];
+    let dc = [108.5, 110.5, 110.7, 122.0, 123.0];
+    assert_eq!(walk_bars(&served, &sc, &dd, &dc), with(10, &[(day(2025, 11, 1), 123.0)]), "November closes on the daily chart; October keeps its own 110");
+    // a chart cached on 28 October and read on 12 November
+    let (cached, cc) = with(9, &[(day(2025, 10, 1), 108.0), (day(2025, 10, 28), 109.0)]);
+    assert_eq!(walk_bars(&cached, &cc, &dd, &dc), with(9, &[(day(2025, 10, 1), 110.7), (day(2025, 11, 1), 123.0)]), "October's true last close, and November's own bar");
+    // the same cache after a 2 for 1 split it has not seen: the daily chart is on the new share, so the tail stays
+    let halved: Vec<f64> = dc.iter().map(|c| c / 2.0).collect();
+    assert_eq!(walk_bars(&cached, &cc, &dd, &halved), with(9, &[(day(2025, 10, 1), 109.0)]), "two shares are never joined");
+    assert_eq!(walk_bars(&cached, &cc, &dd[1..], &dc[1..]), with(9, &[(day(2025, 10, 1), 109.0)]), "no daily bar by the chart's last day: nothing to compare");
+    // the daily bar of the chart's own last day is the one compared: 121.5 against the live 121, not the 60 before it
+    let own_day = [day(2025, 11, 10), day(2025, 11, 11), day(2025, 11, 12)];
+    assert_eq!(walk_bars(&served, &sc, &own_day, &[60.0, 121.5, 123.0]), with(10, &[(day(2025, 11, 1), 123.0)]));
+    assert_eq!(walk_bars(&served, &sc, &own_day, &[121.5, 60.0, 123.0]), with(10, &[(day(2025, 11, 1), 121.0)]), "and a day off the band is not");
+    // the band's edges, 0.67 to 1.5 of the daily close: 150 against 100 is out, 149 in; 67 in, 66.8 and 66 out
+    let edge = |live: f64| walk_bars(&[day(2025, 9, 1), day(2025, 10, 1), day(2025, 10, 28)], &[90.0, 95.0, live], &[day(2025, 10, 28), day(2025, 10, 31)], &[100.0, 101.0]).1[1];
+    assert_eq!((edge(150.0), edge(149.0), edge(67.0), edge(66.8), edge(66.0)), (150.0, 101.0, 101.0, 66.8, 66.0));
+    // one bar in the last month: already on the 1st, or the live bar alone
+    let (single, sgc) = with(10, &[(day(2025, 11, 1), 120.0)]);
+    assert_eq!(walk_bars(&single, &sgc, &[], &[]), (single.clone(), sgc.clone()));
+    let (live, lvc) = with(10, &[(day(2025, 11, 11), 121.0)]);
+    assert_eq!(walk_bars(&live, &lvc, &[], &[]), with(10, &[(day(2025, 11, 1), 121.0)]), "a live bar alone moves to its month's first day");
+    assert_eq!(walk_bars(&single, &sgc, &dd[..3], &dc[..3]), (single.clone(), sgc.clone()), "a daily chart that ends a month earlier changes nothing");
+    // not monthly at the tail, or too short to tell: as served
+    let daily = [day(2025, 11, 5), day(2025, 11, 6), day(2025, 11, 7), day(2025, 11, 10), day(2025, 11, 11)];
+    let flat = [1.0, 2.0, 3.0, 4.0, 5.0];
+    assert_eq!(walk_bars(&daily, &flat, &dd, &dc), (daily.to_vec(), flat.to_vec()), "a daily tail");
+    let weekly = [day(2025, 10, 20), day(2025, 10, 27), day(2025, 11, 3)];
+    assert_eq!(walk_bars(&weekly, &flat[..3], &dd, &dc), (weekly.to_vec(), flat[..3].to_vec()), "a weekly step into a new month");
+    let nineteen = [day(2025, 10, 1), day(2025, 10, 13), day(2025, 11, 1), day(2025, 11, 11)];
+    assert_eq!(walk_bars(&nineteen, &flat[..4], &[], &[]), (nineteen.to_vec(), flat[..4].to_vec()), "19 days is not a month's step");
+    let twenty = [day(2025, 10, 1), day(2025, 10, 12), day(2025, 11, 1), day(2025, 11, 11)];
+    assert_eq!(walk_bars(&twenty, &flat[..4], &[], &[]), (twenty[..3].to_vec(), vec![1.0, 2.0, 4.0]), "20 days is");
+    assert_eq!(walk_bars(&served[10..], &sc[10..], &dd, &dc), (served[10..].to_vec(), sc[10..].to_vec()), "two bars of one month and nothing before them");
+    assert_eq!(walk_bars(&live[9..], &lvc[9..], &[], &[]), (single[9..].to_vec(), lvc[9..].to_vec()), "two bars a month apart are a monthly tail");
+    assert_eq!(walk_bars(&months[..1], &mc[..1], &dd, &dc), (months[..1].to_vec(), mc[..1].to_vec()), "one bar");
+    assert_eq!(walk_bars(&[], &[], &dd, &dc), (Vec::new(), Vec::new()));
+    assert_eq!(walk_bars(&served, &sc[..11], &[], &[]), (single.clone(), sgc.clone()), "a close short: the bars that have one");
+}
+
+/// (#1512) The walk's view reads the month Yahoo serves twice as a cutoff reads a month: its legs are those of the
+/// chart with one bar for that month on the 1st, not those of the chart as served.
+#[test]
+fn parity_walk_view_reads_the_last_month_once() {
+    let leg = |v: &[Option<(String, f64)>], label: &str| HORIZONS.iter().position(|(l, _)| *l == label).and_then(|i| v[i].as_ref().map(|(_, p)| *p));
+    let months: Vec<NaiveDate> = (0..30).map(|k| NaiveDate::from_ymd_opt(2023 + (5 + k) / 12, ((5 + k) % 12) as u32 + 1, 1).unwrap()).collect();
+    let mc: Vec<f64> = (0..30).map(|k| 100.0 * 1.02f64.powi(k)).collect();
+    let live = mc[29] * 1.05;
+    let (mut served, mut sc) = (months.clone(), mc.clone());
+    served.push(NaiveDate::from_ymd_opt(2025, 11, 11).unwrap());
+    sc.push(live);
+    let mut once = mc.clone();
+    once[29] = live;
+    let view = |d: &[NaiveDate], c: &[f64]| backtest_quote("W", d, c, &[], c.len() - 1, 12, &BTreeMap::new());
+    let (walk, _) = parity_walk_view("W", &served, &sc, &[], &[], &[]).expect("a chart with bars has a view");
+    assert_eq!(months[29], NaiveDate::from_ymd_opt(2025, 11, 1).unwrap(), "the chart's own November bar");
+    assert_eq!(walk.price_eur, Some(live), "the live close");
+    assert_eq!(walk.perf, view(&months, &once).perf, "the legs of one November bar on the 1st");
+    assert!(leg(&walk.perf, "1Y").is_some());
+    assert_ne!(leg(&walk.perf, "1Y"), leg(&view(&served, &sc).perf, "1Y"), "not the legs of the chart as served");
 }
 
 /// (#1509) Each switch serves only its own group from the walk's view, a missing leg included: 1Y brings 6M, the long
