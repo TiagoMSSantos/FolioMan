@@ -29701,6 +29701,16 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   the owner's word ships, as in (#1442). Outside evidence, not a bar: of Bessembinder's 29,078 US stocks
 #   (1925-2023), 51.6 % had a negative lifetime return, and the best 100 of each decade still fell 32.5 % on
 #   average at their worst inside it.
+# RESULT, 2026-11-14, 8 probes on 9863c85: pit H8 43569129030, H4 43569141914, H2 43569154262, H1 43569168294; dead H8
+#   43569181425, H4 43569194380, H2 43569207196, H1 43569220117. `S+inter never-sell vs index DCA`, 21 programs, mean
+#   (median, worst): pit H1 +5.0 (+4.0, +2.6), H2 +4.9 (+4.2, +2.7), H4 +4.8 (+4.5, +2.8), H8 +4.7 (+4.7, +2.6); dead
+#   H1 +2.9 (+2.9, +1.6), H2 +3.3 (+3.3, +1.6), H4 +3.6 (+3.5, +1.6), H8 +3.8 (+3.7, +1.6). Gain over flat, mean /
+#   median / worst: pit H2 -0.1 / +0.2 / +0.1, H4 -0.2 / +0.5 / +0.2, H8 -0.3 / +0.7 / +0.0; dead H2 +0.4 / +0.4 /
+#   +0.0, H4 +0.7 / +0.6 / +0.0, H8 +0.9 / +0.8 / +0.0. In pit the head trims the mean and lifts the median; in dead
+#   it lifts both. No rung clears +0.2 on the pit mean, so none qualifies. SAID BEFORE THE RUN, read back: HELD, the
+#   reader picks flat.
+# VERDICT, 2026-11-14: NONE QUALIFIES, the bar reads flat, as in (#1442). `sizing.head_weight` stays 8 on the owner's
+#   word of 2026-11-11; nothing moves.
 
 # (#1482) THE ANCHOR SKEW FROM THE PAGE SIDE, PRE-REGISTERED 2026-11-13 before any run. Row: (#1483). No knob, no
 #   Rust: the Screen A/B ((#1450)) reads what the walk's anchor map does to the published page.
@@ -30109,6 +30119,22 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   built only on the owner's word and A/B'd on a probe tag before Pages. A group that moves nothing alone and nothing
 #   in its all-but line is RECORD: a display gap with no seat. Nothing ships from this block.
 # REVERT RULE: none; display only, under `print_parity`.
+# RESULT, 2026-11-14, Screen A/B 43569254493 on probe-r24 (265a6a7), knobs="print_parity=true". BUY NOW: no name
+#   enters or leaves, no share moves. FIELDS (n / median / p90): P-M 0.00 on every field but range (0.01 / 0.25); M-W
+#   10Y 1658 / 10.62 / 37.48, range 2.39 / 12.94, 1Y 1.69 / 9.04, vol 3.04 / 8.64. BOOK, 622 stocks: score M 10/10, W
+#   7/10 (out DVA KEYS FIX; in M4I.DE NTAP 5AP.DE); momentum M 10/10, W 9/10 (out TER; in ARM). SPLIT, the four groups
+#   whose ALONE line moves a seat: 1Y, score 8/10 (-KEYS -FIX +EME +M4I.DE) and momentum 9/10 (-TER +FLEX); 5Y, score
+#   9/10 (-DVA +M4I.DE); 20Y and MA, score 9/10 each with the same swap (-ROST +KLA.DE). The ALL-BUT lines that differ
+#   from W's book: 1Y (score 8/10 -DVA -ROST +KLA.DE +M4I.DE, momentum 10/10), 5Y (score 8/10 -KEYS -FIX +NTAP
+#   +5AP.DE), 6M (momentum -TER +FLEX) and MA (score +ALL in 5AP.DE's place). The other 16 groups move nothing either
+#   way.
+# SAID BEFORE THE RUN, read back. 1 FAILS: W keeps 7 of 10. 2 HOLDS: 10Y alone moves no seat. 3 FAILS: 1Y alone
+#   explains KEYS, FIX and M4I.DE, but DVA moves alone only in 5Y, NTAP and 5AP.DE in no group alone, and range and
+#   vol move nothing alone. 4 HOLDS as written: only 1Y moves the momentum book alone; ARM shows in no alone line, so
+#   it needs 1Y and 6M together. RULE, read: four serve-the-walk candidates, the largest mover first: 1Y (6 names),
+#   then 20Y, 5Y and MA (2 each); 16 groups are RECORD; 6M moves a seat only with 1Y and fits neither case.
+# VERDICT, 2026-11-14: four owner questions, one per group, 1Y first, each in (#1482)'s (a) shape; nothing is built
+#   before the owner's word. RECORD for the 16 groups that move nothing; 6M rides on 1Y's question.
 
 # (#1500) THE 10Y ANCHOR AT THE PAGE'S SEAM, PRE-REGISTERED 2026-11-14 before any run. Knob: `anchor_seam_months`
 #   (false ships). Row: (#1501). A measurement fix, page side.
@@ -30144,6 +30170,23 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   true` as a measurement fix (the column then reads what its help says; no golden to bless). A growth score moves ->
 #   the mechanism above is wrong somewhere: RECORD, and the knob goes to RETIRED.
 # REVERT RULE: none; the knob ships false.
+# RESULT, 2026-11-14, Screen A/B 43570601920 on probe-r24 (265a6a7), knobs="anchor_seam_months=true
+#   print_parity=true". BUY NOW: no name enters or leaves and no share moves; no row enters or leaves any table. The
+#   page has no 10Y price column (only the bond and inflation tables show 10Y, as yields), so the 10Y cell of SAID 1
+#   is read on the log's 10Y line of the 25 book names: it moves on all 25 with c1 = c2, 20 up and 5 down (NVD.DE
+#   +39.2 -> +43.2, BTC-EUR +29.2 -> +32.8, LAR0.DE +23.5 -> +25.3, DVA -0.4 -> -1.5, MNST +1.8 -> +1.2). 15 page
+#   cells move on other legs where both controls agree, plus one REIT MISSES tooltip, none on the Stocks table: 8Y on
+#   CD9.PA, LCJP.L and WSML.L (CORE), EPRE.PA (REITs) and REZI (social); 5Y on HOOD (+425.1 -> +448.8); 2Y on F50A.DE
+#   (CORE); 1Y on Q (young, +46.4 -> +39.5); PEG on 3 rows and S-8Y on 2; and two growth SCOREs, HSIC 19.5 -> 19.6
+#   (attention; no shown leg cell moves, not traced) and HOOD 8.1 -> 8.2 (social). The census's 10Y M-W reads 10.62 ->
+#   2.96 at the median and 37.48 -> 19.94 at p90 (n 1658); every other field moves 0.04 or less, and P-M does not
+#   move.
+# SAID BEFORE THE RUN, read back. 1 FAILS: two growth SCOREs move, with 8Y, 5Y, 2Y and 1Y cells. 2 HOLDS: 2.96 < 3. 3
+#   did not happen: no on-sale row enters or leaves. Where the mechanism missed: `cadence_seam` does not know the leg.
+#   It fires on any window that opens on bars 20 or more days apart and closes on bars 5 or fewer apart, so at 8Y, 5Y,
+#   2Y and 1Y it also reads names whose daily chart starts after their monthly head (European ETFs, young names).
+# VERDICT, 2026-11-14: by the rule, a growth score moved, so the mechanism is wrong somewhere: RECORD, and
+#   `anchor_seam_months` goes to RETIRED in a code commit of its own. The 10Y gap stays as (#1484) measured it.
 
 # (#1502) THE CENSUS'S VIEWS AS PLAIN FUNCTIONS, 2026-11-14. Tests, no knob. (#1493) left 5 GAPS under the process-wide
 #   `print_parity` switch, out of the --lib suite's reach: `quote_one`'s `!m.closes.is_empty()` filter and its two
@@ -30202,6 +30245,25 @@ intraday_exit_eu: "14:00" # (#1214) Frankfurt time
 #   of 20y stress edge ((#47)); every proximity rung sat inside the noise ((#48)); 1/PEG off won at 8y and lost at
 #   12y ((#424), (#425)). The ruler is blind under about 4 %/yr ((#1333)) and these folds were read in round 22, so
 #   a pass here is weak evidence: the A/B and the owner decide.
+# RESULT, 2026-11-14, on probe-r24 (265a6a7): CI 43569072548, F1 43569086532, F2 43569100665, F3 43569115493. Each
+#   test runs the 7 rows in order and the control row's gains read +0.00 (the 6y logs' "windows scored: 32" is the
+#   on-sale lane's count; the growth leg scores 921 windows). Per row, its 12 run x horizon GUARD lines PASS / FAIL /
+#   INERT, then the mean of its 24 NULL BAND gains: L1 0.03 7 / 1 / 4, -0.045 (the FAIL is F1 15y: the gain equals its
+#   edge at 2 dp, top -0.15 / -0.15, pond +0.01 / -0.02); L2 0.0056 8 / 0 / 4, +0.043; L3 0 8 / 0 / 4, +0.040; D1 53.8
+#   12 / 0 / 0, -0.189; D2 0.302 12 / 0 / 0, -0.155; D3 0.469 12 / 0 / 0, -0.149. No band reads OUTSIDE on any row (0
+#   of 12). So L2 and L3 PASS; L1 (a GUARD FAIL and a negative mean) and D1, D2 and D3 (negative means) FAIL. PICK:
+#   L2, the ladder's best passing mean.
+# L2's Screen A/B 43572325480 on 265a6a7, knobs="growth_fund_weight=0.0056": no name enters or leaves BUY NOW. Every
+#   stock share moves, seats 1-5 16.59 -> 16.89 % and 6-10 2.07 -> 2.11 %, and BTC-EUR 6.67 -> 5.00 % (stocks 93.3 ->
+#   95.0 %); c1 and c2 agree. That move is the coin's budget rule, not the dial: `size_weights` gives the coin its 5
+#   over the summed budgets of the classes with a row scoring above 0 in the ranked book, and in the arm a fund-class
+#   row scores above 0 though no fund takes a seat. Stocks: GWW and 6MK.DE enter the 30-row table, CB and GL leave it;
+#   FTNT 49.4 -> 45.6, APC.DE 38.5 -> 33.5 (3 -> 5), ASML 37.8 -> 35.8 (5 -> 3), NVD.DE 32.5 -> 26.2 (11 -> 13).
+#   REITs: 40 cells move (21 SCORE, 11 RANK, 8 S-8Y; SPG 23.7 -> 22.0). ETFs: none. Yahoo's crumb handshake failed in
+#   the arm and in c2 (justETF filled the fund facts).
+# VERDICT, 2026-11-14: L2 is the PICK, and its A/B moves no BUY NOW name, so under SHIP it closes as RECORD, as round
+#   22's row 4 did; L3 passes but loses the ladder (+0.040 against +0.043): RECORD. L1, D1, D2 and D3 FAIL: RECORD.
+#   Nothing ships.
 
 # (#820) ENTRY PROBE, 2026-10-21, record only, no knob. Sweep 40's falsifier: should a growth buy wait
 # for a second passing cutoff? Every backtest now prints, after the EXIT PROBE, the forward peer-relative
